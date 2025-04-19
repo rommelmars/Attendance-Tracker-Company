@@ -1,0 +1,102 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(-45deg, #104d30, #98fb98, #2e8b57, #c1ffc1);
+    background-size: 400% 400%;
+    animation: gradient 5s ease infinite;
+}
+
+@keyframes gradient {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+.login-container {
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 1.5rem; /* Reduced from 2rem */
+    border-radius: 10px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 350px; /* Reduced from 400px */
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 1rem; /* Reduced from 1.5rem */
+    color: #2e8b57;
+    font-size: 1.5rem; /* Added to make heading smaller */
+}
+
+.input-group {
+    margin-bottom: 0.8rem; /* Reduced from 1.2rem */
+}
+
+label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #333;
+}
+
+input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 1rem;
+}
+
+input:focus {
+    outline: none;
+    border-color: #2e8b57;
+    box-shadow: 0 0 5px rgba(46, 139, 87, 0.3);
+}
+
+.logo-container {
+    text-align: center;
+    margin-bottom: 1.5rem; /* Reduced from 2.5rem */
+    width: 100%;
+    overflow: visible;
+    padding: 5px 0; /* Reduced from 10px */
+}
+
+.logo {
+    max-width: 100%;
+    height: auto;
+    max-height: 150px; /* Reduced from 200px */
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+}
+
+.login-btn {
+    width: 100%;
+    padding: 12px;
+    background-color: #2e8b57;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.login-btn:hover {
+    background-color: #3cb371;
+}

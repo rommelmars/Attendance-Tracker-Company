@@ -1,0 +1,92 @@
+{% extends 'login.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card shadow mb-4">
+            <div class="card-body">
+                <h2 class="card-title">Employee Dashboard</h2>
+                <p class="card-text lead">Today: {{ today|date:"l, F j, Y" }}</p>
+                <hr>
+                
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h3>Current Status: 
+                        {% if current_status == "Not Clocked In" %}
+                            <span class="badge bg-secondary status-badge">Not Clocked In</span>
+                        {% elif current_status == "Clocked In" %}
+                            <span class="badge bg-success status-badge">Clocked In</span>
+                        {% elif current_status == "Clocked Out" %}
+                            <span class="badge bg-danger status-badge">Clocked Out</span>
+                        {% elif current_status == "On Break" %}
+                            <span class="badge bg-warning text-dark status-badge">On Break</span>
+                        {% elif current_status == "At Lunch" %}
+                            <span class="badge bg-info text-dark status-badge">At Lunch</span>
+                        {% endif %}
+                    </h3>
+                    <div>
+                        <a href="{% url 'tracker' %}" class="btn btn-primary">Go to Tracker</a>
+                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#exportModal">
+                            Export Attendance
+                        </button>
+                    </div>
+                </div>
+                
+                <h4>Today's Activity</h4>
+                {% if logs %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Action</th>
+                                <th>Note</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in logs %}
+                            <tr>
+                                <td>{{ log.timestamp|time:"H:i:s" }}</td>
+                                <td>{{ log.get_action_display }}</td>
+                                <td>{{ log.note|default:"-" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No activity recorded for today.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Export Modal -->
+<div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exportModalLabel">Export Attendance Data</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="exportForm" action="{% url 'export_csv' %}" method="get">
+                    <div class="mb-3">
+                        <label for="start_date" class="form-label">Start Date</label>
+                        <input type="date" class="form-control" id="start_date" name="start_date">
+                    </div>
+                    <div class="mb-3">
+                        <label for="end_date" class="form-label">End Date</label>
+                        <input type="date" class="form-control" id="end_date" name="end_date">
+                    </div>
+                    <div class="text-muted small">Leave blank to export the current month's data.</div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" form="exportForm" class="btn btn-primary">Export CSV</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

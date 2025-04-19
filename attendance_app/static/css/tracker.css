@@ -1,0 +1,777 @@
+/* Enhanced aesthetic styling for the attendance tracker */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    min-height: 100vh;
+    background: linear-gradient(-45deg, #104d30, #98fb98, #2e8b57, #c1ffc1);
+    background-size: 400% 400%;
+    animation: gradient 10s ease infinite;
+    padding: 2rem;
+}
+
+@keyframes gradient {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Navigation Bar */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(10px);
+    padding: 1rem 2rem;
+    color: white;
+}
+
+.navbar-left {
+    display: flex;
+    flex-direction: column;
+}
+
+.navbar-title {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.navbar-subtitle {
+    font-size: 1rem;
+    opacity: 0.9;
+}
+
+.navbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.welcome-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.logout-btn {
+    padding: 0.5rem 1rem;
+    border: 2px solid white;
+    color: white;
+    background-color: transparent;
+    border-radius: 25px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.logout-btn:hover {
+    background-color: white;
+    color: #2e8b57;
+    transform: translateY(-2px);
+}
+
+/* Main Container Layout */
+.main-container {
+    display: flex;
+    height: auto; /* Changed from calc(100vh - 80px) to auto */
+    min-height: 95vh; /* Minimum height to match sidebar */
+    padding: 1rem;
+    align-items: flex-start; /* This ensures the sidebar and content area align at the top */
+}
+
+/* Sidebar */
+.sidebar {
+    width: 250px;
+    background-color: rgba(255, 255, 255, 0.8);
+    border-radius: 15px;
+    padding: 1.5rem;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-right: 1rem;
+    /* Add these properties to make sidebar taller */
+    min-height: 95vh; /* This will make the sidebar almost full viewport height */
+    height: auto; /* Allow it to grow if needed */
+}
+
+.sidebar-title {
+    font-size: 1.3rem;
+    color: #2e8b57;
+    text-align: center;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+.sidebar-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.action-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    flex: 0 1 auto; /* Changed from flex: 1 to prevent stretching */
+}
+
+/* Content Area */
+.content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.main-card {
+    background-color: rgba(255, 255, 255, 0.9);
+    border-radius: 15px;
+    flex: 1;
+    padding: 2rem;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+}
+
+/* Section styling */
+.section-title {
+    font-size: 1.8rem;
+    color: #2e8b57;
+    margin-bottom: 1.5rem;
+    font-weight: 700;
+    border-bottom: 2px solid rgba(46, 139, 87, 0.3);
+    padding-bottom: 0.5rem;
+}
+
+/* Activity logs */
+.logs-section {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.activity-list {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.activity-item {
+    display: flex;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.7);
+    padding: 1rem;
+    border-radius: 10px;
+    border-left: 4px solid #2e8b57;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+}
+
+.activity-item:hover {
+    background-color: rgba(255, 255, 255, 0.9);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+.activity-time {
+    font-weight: 600;
+    color: #6c757d;
+    min-width: 80px;
+    padding-right: 1rem;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.activity-content {
+    margin-left: 1rem;
+    flex: 1;
+}
+
+.activity-action {
+    color: #2e8b57;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* No activity message */
+.no-activity {
+    background-color: rgba(255, 255, 255, 0.7);
+    padding: 1.5rem;
+    border-radius: 10px;
+    text-align: center;
+    font-style: italic;
+    color: #6c757d;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+/* Footer actions */
+.footer-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    justify-content: center;
+}
+
+/* Button styles */
+.btn {
+    padding: 0.8rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+}
+
+.btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.btn-success {
+    background-color: #2e8b57;
+    color: white;
+}
+
+.btn-warning {
+    background-color: #ffa500;
+    color: white;
+}
+
+.btn-info {
+    background-color: #5bc0de;
+    color: white;
+}
+
+.btn-danger {
+    background-color: #d9534f;
+    color: white;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-outline-success {
+    border: 2px solid #2e8b57;
+    color: #2e8b57;
+    background-color: white;
+}
+
+.btn-outline-success:hover {
+    background-color: #2e8b57;
+    color: white;
+}
+
+/* Combined break button styles */
+.combined-break-btn {
+    background-color: #8e44ad;
+    border-color: #8e44ad;
+    position: relative;
+    overflow: hidden;
+}
+
+.combined-break-btn:hover {
+    background-color: #7d3c98;
+    border-color: #7d3c98;
+}
+
+.combined-break-btn .small-text {
+    font-size: 0.8rem;
+    opacity: 0.9;
+    margin-left: 5px;
+}
+
+/* Messages */
+.messages {
+    margin-bottom: 1rem;
+}
+
+.alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.alert-success {
+    background-color: rgba(46, 139, 87, 0.2);
+    border-left: 4px solid #2e8b57;
+    color: #2e8b57;
+}
+
+.alert-danger {
+    background-color: rgba(217, 83, 79, 0.2);
+    border-left: 4px solid #d9534f;
+    color: #d9534f;
+}
+
+.alert-warning {
+    background-color: rgba(255, 165, 0, 0.2);
+    border-left: 4px solid #ffa500;
+    color: #ffa500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .main-container {
+        flex-direction: column;
+        height: auto;
+    }
+    
+    .sidebar {
+        width: 100%;
+        margin-right: 0;
+        margin-bottom: 1rem;
+    }
+    
+    .sidebar-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.8rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .navbar {
+        flex-direction: column;
+        text-align: center;
+        gap: 1rem;
+        padding: 1rem;
+    }
+    
+    .navbar-right {
+        flex-direction: column;
+    }
+    
+    .sidebar-actions {
+        grid-template-columns: 1fr;
+    }
+    
+    .footer-actions {
+        flex-direction: column;
+    }
+    
+    .activity-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .activity-time {
+        border-right: none;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+        padding-bottom: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .activity-content {
+        margin-left: 0;
+    }
+}
+
+/* Special styling for activity items */
+.activity-item.combined-start {
+    border-left-color: #8e44ad;
+    background-color: rgba(142, 68, 173, 0.1);
+}
+
+.activity-item.combined-end {
+    border-left-color: #8e44ad;
+    background-color: rgba(142, 68, 173, 0.05);
+}
+
+/* Calendar Section */
+.calendar-section {
+    margin-top: 0;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.date-picker-wrapper {
+    position: relative;
+}
+
+.date-picker {
+    padding: 0.5rem 1rem;
+    border: 2px solid rgba(46, 139, 87, 0.3);
+    border-radius: 8px;
+    background-color: white;
+    color: #2e8b57;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.date-picker:hover {
+    border-color: #2e8b57;
+}
+
+/* Calendar Button */
+.calendar-btn {
+    margin-top: 1.5rem; /* Increased margin for better spacing */
+    margin-bottom: 1rem;
+    background-color: #4b6cb7;
+    color: white;
+    border: none;
+    padding: 1rem 1.2rem; /* Slightly taller button */
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 2rem;
+    border-radius: 15px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    width: 80%;
+    max-width: 500px;
+    animation: modalFadeIn 0.3s ease;
+}
+
+@keyframes modalFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-title {
+    color: #2e8b57;
+    text-align: center;
+    margin-bottom: 1.5rem;
+    font-weight: 600;
+}
+
+.close-button {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.close-button:hover {
+    color: #2e8b57;
+}
+
+/* FlatPickr Calendar Customization */
+.flatpickr-calendar {
+    background-color: white;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
+    border: none;
+    width: 100%;
+}
+
+.flatpickr-day.selected {
+    background-color: #2e8b57;
+    border-color: #2e8b57;
+}
+
+.flatpickr-day.today {
+    border-color: #2e8b57;
+}
+
+.flatpickr-day:hover {
+    background-color: rgba(46, 139, 87, 0.1);
+}
+
+.flatpickr-months .flatpickr-month {
+    background-color: #2e8b57;
+    color: white;
+}
+
+.flatpickr-current-month .flatpickr-monthDropdown-months {
+    color: white;
+}
+
+.flatpickr-current-month input.cur-year {
+    color: white;
+}
+
+.flatpickr-weekdays {
+    background-color: #2e8b57;
+}
+
+span.flatpickr-weekday {
+    background-color: #2e8b57;
+    color: white;
+}
+
+.flatpickr-days {
+    border-radius: 0 0 10px 10px;
+}
+
+/* Responsive Calendar */
+@media (max-width: 768px) {
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .date-picker {
+        width: 100%;
+    }
+    
+    .modal-content {
+        width: 95%;
+        margin: 10% auto;
+    }
+}
+
+/* Time allocation styles */
+.time-allocation-summary {
+    background-color: rgba(255, 255, 255, 0.6);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.time-item {
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.time-item:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.time-label {
+    display: block;
+    color: #2e8b57;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+}
+
+.time-value {
+    display: block;
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.time-value i {
+    margin-right: 0.3rem;
+}
+
+.ongoing-activity {
+    background-color: rgba(46, 139, 87, 0.1);
+    color: #2e8b57;
+    padding: 0.5rem;
+    border-radius: 5px;
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.text-danger {
+    color: #d9534f !important;
+}
+
+/* Activity item styling for break and lunch */
+.start-activity {
+    border-left-color: #ffa500;
+}
+
+.end-activity {
+    border-left-color: #5bc0de;
+}
+
+.time-info {
+    display: inline-block;
+    margin-left: 0.5rem;
+    color: #6c757d;
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+/* Pulsing effect for ongoing activities */
+.pulse {
+    animation: pulse-animation 2s infinite;
+}
+
+@keyframes pulse-animation {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Add overbreak/overlunch indicators */
+.exceeded {
+    background-color: rgba(217, 83, 79, 0.1);
+    border-left-color: #d9534f;
+}
+
+.exceeded .activity-action {
+    color: #d9534f;
+}
+
+.time-exceeded {
+    color: #d9534f;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    background-color: rgba(217, 83, 79, 0.1);
+    border-radius: 4px;
+    margin-top: 0.2rem;
+    display: inline-block;
+}
+
+/* Time usage progress bars */
+.time-usage-bars {
+    margin: 0.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.time-bar {
+    height: 8px;
+    background-color: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.time-used-bar {
+    height: 100%;
+    background-color: #2e8b57;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.exceeded-bar {
+    background-color: rgba(217, 83, 79, 0.2);
+}
+
+.time-exceeded-bar {
+    height: 100%;
+    background-color: #d9534f;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+/* Pagination styles */
+.pagination-container {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: center;
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: 10px;
+    padding: 0.5rem;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.page-numbers {
+    display: flex;
+    margin: 0 0.5rem;
+}
+
+.pagination-btn {
+    padding: 0.5rem 1rem;
+    margin: 0 0.2rem;
+    border-radius: 5px;
+    color: #2e8b57;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    background-color: transparent;
+}
+
+.pagination-btn:hover {
+    background-color: rgba(46, 139, 87, 0.1);
+}
+
+.pagination-btn.active {
+    background-color: #2e8b57;
+    color: white;
+}
+
+.pagination-btn.disabled {
+    color: #aaa;
+    cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+    .pagination {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .page-numbers {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .pagination-btn {
+        margin: 0.2rem;
+    }
+}

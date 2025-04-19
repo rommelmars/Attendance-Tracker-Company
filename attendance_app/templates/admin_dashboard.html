@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <h2 class="card-title">Admin Dashboard</h2>
+        <p class="card-text lead">Monitor employee attendance records</p>
+        <hr>
+        
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <form method="get" class="row g-3">
+                    <div class="col-auto">
+                        <label for="date" class="col-form-label">Filter by date:</label>
+                    </div>
+                    <div class="col-auto">
+                        <input type="date" id="date" name="date" value="{{ filter_date|date:'Y-m-d' }}" class="form-control">
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-secondary">Filter</button>
+                    </div>
+                </form>
+            </div>
+            <div class="col-md-6 text-md-end">
+                <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#exportModal">
+                    Export All Data
+                </button>
+            </div>
+        </div>
+        
+        <h4>Attendance for {{ filter_date|date:"l, F j, Y" }}</h4>
+        
+        {% if user_logs %}
+            {% for user, logs in user_logs.items %}
+            <div class="card mb-3">
+                <div class="card-header bg-light">
+                    <h5 class="mb-0">{{ user.get_full_name|default:user.username }}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Action</th>
+                                    <th>Note</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for log in logs %}
+                                <tr>
+                                    <td>{{ log.timestamp|time:"H:i:s" }}</td>
+                                    <td>{{ log.get_action_display }}</td>
+                                    <td>{{ log.note|default:"-" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-info">No attendance records found for this date.</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Export Modal -->
+<div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exportModalLabel">Export Attendance Data</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="exportForm" action="{% url 'admin_export_csv' %}" method="get">
+                    <div class="mb-3">
+                        <label for="start_date" class="form-label">Start Date</label>
+                        <input type="date" class="form-control" id="start_date" name="start_date">
+                    </div>
+                    <div class="mb-3">
+                        <label for="end_date" class="form-label">End Date</label>
+                        <input type="date" class="form-control" id="end_date" name="end_date">
+                    </div>
+                    <div class="text-muted small">Leave blank to export the current month's data.</div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" form="exportForm" class="btn btn-primary">Export CSV</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

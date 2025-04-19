@@ -1,0 +1,387 @@
+{% load static %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/tracker.css' %}">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+{% endblock %}
+
+{% block content %}
+<!-- Navigation Bar -->
+<nav class="navbar">
+    <div class="navbar-left">
+        <h1 class="navbar-title">Attendance Tracker</h1>
+        <p class="navbar-subtitle">Record your work activities for {{ today|date:"l, F j, Y" }}</p>
+    </div>
+    <div class="navbar-right">
+        <span class="welcome-text">Welcome, {{ user.username }}</span>
+        <a href="{% url 'logout' %}" class="btn btn-outline-light logout-btn">
+            <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
+    </div>
+</nav>
+
+<div class="main-container">
+    <!-- Sidebar with action buttons and time allocation -->
+    <div class="sidebar">
+        <h3 class="sidebar-title">Actions</h3>
+        
+        <!-- Time allocation summary -->
+        {% if is_today %}
+        <div class="time-allocation-summary">
+            <div class="time-item">
+                <span class="time-label"><i class="fas fa-coffee"></i> Break Time:</span>
+                {% if is_break_exceeded %}
+                    <div class="time-usage-bars">
+                        <div class="time-bar">
+                            <div class="time-used-bar" style="width: 100%"></div>
+                        </div>
+                        <div class="time-bar exceeded-bar">
+                            <div class="time-exceeded-bar" style="width: {% widthratio break_minutes_exceeded 30 100 %}%"></div>
+                        </div>
+                    </div>
+                    <span class="time-value text-danger">
+                        <i class="fas fa-exclamation-triangle"></i> Exceeded by {{ break_minutes_exceeded }} minutes
+                    </span>
+                {% else %}
+                    <div class="time-usage-bars">
+                        <div class="time-bar">
+                            <div class="time-used-bar" style="width: {% widthratio break_minutes_used 30 100 %}%"></div>
+                        </div>
+                    </div>
+                    <span class="time-value {% if break_minutes_remaining == 0 %}text-danger{% endif %}">
+                        {{ break_minutes_remaining }} of 30 minutes remaining
+                    </span>
+                {% endif %}
+                {% if ongoing_break %}
+                <div class="ongoing-activity">
+                    <i class="fas fa-hourglass-half pulse"></i> Break in progress ({{ break_elapsed_minutes }} min)
+                </div>
+                {% endif %}
+            </div>
+            
+            <div class="time-item">
+                <span class="time-label"><i class="fas fa-utensils"></i> Lunch Time:</span>
+                {% if is_lunch_exceeded %}
+                    <div class="time-usage-bars">
+                        <div class="time-bar">
+                            <div class="time-used-bar" style="width: 100%"></div>
+                        </div>
+                        <div class="time-bar exceeded-bar">
+                            <div class="time-exceeded-bar" style="width: {% widthratio lunch_minutes_exceeded 60 100 %}%"></div>
+                        </div>
+                    </div>
+                    <span class="time-value text-danger">
+                        <i class="fas fa-exclamation-triangle"></i> Exceeded by {{ lunch_minutes_exceeded }} minutes
+                    </span>
+                {% else %}
+                    <div class="time-usage-bars">
+                        <div class="time-bar">
+                            <div class="time-used-bar" style="width: {% widthratio lunch_minutes_used 60 100 %}%"></div>
+                        </div>
+                    </div>
+                    <span class="time-value {% if lunch_minutes_remaining == 0 %}text-danger{% endif %}">
+                        {{ lunch_minutes_remaining }} of 60 minutes remaining
+                    </span>
+                {% endif %}
+                {% if ongoing_lunch %}
+                <div class="ongoing-activity">
+                    <i class="fas fa-hourglass-half pulse"></i> Lunch in progress ({{ lunch_elapsed_minutes }} min)
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <form method="post" class="action-form">
+            {% csrf_token %}
+            <div class="sidebar-actions">
+                <!-- Clock In/Out button depends on current state -->
+                {% if is_clocked_in %}
+                    <button type="submit" name="action" value="clock_out" class="btn btn-danger btn-block">
+                        <i class="fas fa-sign-out-alt"></i> Clock Out
+                    </button>
+                {% else %}
+                    <button type="submit" name="action" value="clock_in" class="btn btn-success btn-block">
+                        <i class="fas fa-sign-in-alt"></i> Clock In
+                    </button>
+                {% endif %}
+                
+                <!-- Break buttons - only enabled if clocked in -->
+                {% if is_clocked_in and not ongoing_lunch and is_today %}
+                    {% if not ongoing_break and break_minutes_remaining > 0 %}
+                    <button type="submit" name="action" value="break_start" class="btn btn-warning btn-block">
+                        <i class="fas fa-coffee"></i> Start Break ({{ break_minutes_remaining }}m left)
+                    </button>
+                    {% elif ongoing_break %}
+                    <button type="submit" name="action" value="break_end" class="btn btn-info btn-block">
+                        <i class="fas fa-walking"></i> End Break
+                    </button>
+                    {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-coffee"></i> Break Time Used
+                    </button>
+                    {% endif %}
+                {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-coffee"></i> {% if not is_clocked_in %}Clock in first{% else %}Break Unavailable{% endif %}
+                    </button>
+                {% endif %}
+                
+                <!-- Lunch buttons - only enabled if clocked in -->
+                {% if is_clocked_in and not ongoing_break and is_today %}
+                    {% if not ongoing_lunch and lunch_minutes_remaining > 0 %}
+                    <button type="submit" name="action" value="lunch_start" class="btn btn-warning btn-block">
+                        <i class="fas fa-utensils"></i> Start Lunch ({{ lunch_minutes_remaining }}m left)
+                    </button>
+                    {% elif ongoing_lunch %}
+                    <button type="submit" name="action" value="lunch_end" class="btn btn-info btn-block">
+                        <i class="fas fa-utensils"></i> End Lunch
+                    </button>
+                    {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-utensils"></i> Lunch Time Used
+                    </button>
+                    {% endif %}
+                {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-utensils"></i> {% if not is_clocked_in %}Clock in first{% else %}Lunch Unavailable{% endif %}
+                    </button>
+                {% endif %}
+                
+                <!-- Combined Break Button - only enabled if clocked in -->
+                {% if is_clocked_in and is_today and not ongoing_break and not ongoing_lunch %}
+                    {% if break_minutes_remaining > 0 or lunch_minutes_remaining > 0 %}
+                    <button type="submit" name="action" value="combined_break_start" class="btn btn-primary btn-block combined-break-btn">
+                        <i class="fas fa-mug-hot"></i> Start Combined Break
+                        <span class="small-text">({{ break_minutes_remaining|add:lunch_minutes_remaining }}m total)</span>
+                    </button>
+                    {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-mug-hot"></i> All Break Time Used
+                    </button>
+                    {% endif %}
+                {% elif is_clocked_in and ongoing_break %}
+                    <button type="submit" name="action" value="combined_break_end" class="btn btn-info btn-block">
+                        <i class="fas fa-stop-circle"></i> End Combined Break
+                    </button>
+                {% else %}
+                    <button disabled class="btn btn-secondary btn-block">
+                        <i class="fas fa-mug-hot"></i> {% if not is_clocked_in %}Clock in first{% else %}Combined Break Unavailable{% endif %}
+                    </button>
+                {% endif %}
+            
+            </div>
+        </form>
+        
+        <!-- Calendar Button -->
+        <button id="calendarBtn" class="btn btn-primary btn-block calendar-btn">
+            <i class="fas fa-calendar-alt"></i> View Calendar
+        </button>
+    </div>
+    
+    <!-- Main Content Area -->
+    <div class="content-area">
+        <div class="card main-card">
+            {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            <!-- Activity logs with pagination -->
+            <div class="logs-section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        {% if selected_date %}
+                            Activities for {{ selected_date|date:"l, F j, Y" }}
+                        {% else %}
+                            Today's Activity
+                        {% endif %}
+                    </h2>
+                    
+                    <!-- Date Picker -->
+                    <div class="date-picker-wrapper">
+                        <input type="text" id="datePicker" class="date-picker" placeholder="Select a date" value="{{ selected_date|date:'Y-m-d' }}">
+                        <form id="dateForm" method="get" action="{% url 'tracker' %}">
+                            <input type="hidden" id="selectedDate" name="date">
+                            {% if page %}
+                            <input type="hidden" name="page" value="{{ page }}">
+                            {% endif %}
+                        </form>
+                    </div>
+                </div>
+                
+                {% if logs %}
+                <ul class="activity-list">
+                    {% for log in page_obj %}
+                    <li class="activity-item {% if log.action == 'break_start' or log.action == 'lunch_start' %}start-activity{% elif log.action == 'break_end' or log.action == 'lunch_end' %}end-activity{% endif %}">
+                        <div class="activity-time">{{ log.timestamp|time:"g:i A" }}</div>
+                        <div class="activity-content">
+                            <span class="activity-action">{{ log.action|title|cut:"_"|capfirst }}</span>
+                            {% if log.action == 'break_start' %}
+                                <span class="time-info">(30 min available)</span>
+                            {% elif log.action == 'break_end' %}
+                                {% if is_break_exceeded %}
+                                    <span class="time-info text-danger">(Exceeded by {{ break_minutes_exceeded }} min)</span>
+                                {% else %}
+                                    <span class="time-info">({{ break_minutes_remaining }} min remaining)</span>
+                                {% endif %}
+                            {% elif log.action == 'lunch_start' %}
+                                <span class="time-info">(60 min available)</span>
+                            {% elif log.action == 'lunch_end' %}
+                                {% if is_lunch_exceeded %}
+                                    <span class="time-info text-danger">(Exceeded by {{ lunch_minutes_exceeded }} min)</span>
+                                {% else %}
+                                    <span class="time-info">({{ lunch_minutes_remaining }} min remaining)</span>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                
+                <!-- Pagination Controls -->
+                <div class="pagination-container">
+                    {% if page_obj.has_other_pages %}
+                    <div class="pagination">
+                        {% if page_obj.has_previous %}
+                            <a href="?{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}page={{ page_obj.previous_page_number }}" class="pagination-btn">&laquo; Previous</a>
+                        {% else %}
+                            <span class="pagination-btn disabled">&laquo; Previous</span>
+                        {% endif %}
+                        
+                        <div class="page-numbers">
+                            {% for i in page_obj.paginator.page_range %}
+                                {% if page_obj.number == i %}
+                                    <span class="pagination-btn active">{{ i }}</span>
+                                {% else %}
+                                    <a href="?{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}page={{ i }}" class="pagination-btn">{{ i }}</a>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                        
+                        {% if page_obj.has_next %}
+                            <a href="?{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}page={{ page_obj.next_page_number }}" class="pagination-btn">Next &raquo;</a>
+                        {% else %}
+                            <span class="pagination-btn disabled">Next &raquo;</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% else %}
+                <div class="no-activity">
+                    <p><i class="fas fa-info-circle"></i> No activities recorded for 
+                    {% if selected_date %}
+                        {{ selected_date|date:"l, F j, Y" }}.
+                    {% else %}
+                        today.
+                    {% endif %}
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Footer actions -->
+            <div class="footer-actions">
+                <a href="{% url 'export_csv' %}" class="btn btn-outline-success">
+                    <i class="fas fa-file-csv"></i> Export to CSV
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Calendar Modal -->
+<div id="calendarModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button">&times;</span>
+        <h2 class="modal-title">Select Date to View Activities</h2>
+        <div id="calendar-container"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Clock out confirmation
+        const clockOutBtn = document.querySelector('button[value="clock_out"]');
+        if (clockOutBtn) {
+            clockOutBtn.addEventListener('click', function(e) {
+                if (!confirm('Are you sure you want to clock out?')) {
+                    e.preventDefault();
+                }
+            });
+        }
+        
+        // Initialize date picker
+        const datePicker = flatpickr("#datePicker", {
+            dateFormat: "Y-m-d",
+            maxDate: "today",
+            onChange: function(selectedDates, dateStr) {
+                document.getElementById("selectedDate").value = dateStr;
+                document.getElementById("dateForm").submit();
+            }
+        });
+        
+        // Modal functionality
+        const modal = document.getElementById("calendarModal");
+        const btn = document.getElementById("calendarBtn");
+        const span = document.getElementsByClassName("close-button")[0];
+        
+        btn.onclick = function() {
+            modal.style.display = "block";
+            // Initialize calendar in modal
+            flatpickr("#calendar-container", {
+                inline: true,
+                maxDate: "today",
+                onChange: function(selectedDates, dateStr) {
+                    document.getElementById("selectedDate").value = dateStr;
+                    document.getElementById("dateForm").submit();
+                    modal.style.display = "none";
+                }
+            });
+        }
+        
+        span.onclick = function() {
+            modal.style.display = "none";
+        }
+        
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+        
+        {% if ongoing_break or ongoing_lunch %}
+        // Timer update function
+        function updateTimer() {
+            {% if ongoing_break %}
+            const breakStartTime = new Date("{{ break_start_time|date:'c' }}");
+            const breakElapsed = Math.floor((new Date() - breakStartTime) / 60000);
+            const breakElement = document.querySelector('.ongoing-activity:first-of-type');
+            if (breakElement) {
+                breakElement.innerHTML = `<i class="fas fa-hourglass-half pulse"></i> Break in progress (${breakElapsed} min)`;
+            }
+            {% endif %}
+            
+            {% if ongoing_lunch %}
+            const lunchStartTime = new Date("{{ lunch_start_time|date:'c' }}");
+            const lunchElapsed = Math.floor((new Date() - lunchStartTime) / 60000);
+            const lunchElement = document.querySelector('.ongoing-activity:last-of-type');
+            if (lunchElement) {
+                lunchElement.innerHTML = `<i class="fas fa-hourglass-half pulse"></i> Lunch in progress (${lunchElapsed} min)`;
+            }
+            {% endif %}
+        }
+        
+        // Update timer every minute
+        updateTimer();
+        setInterval(updateTimer, 60000);
+        {% endif %}
+    });
+</script>
+{% endblock %}
