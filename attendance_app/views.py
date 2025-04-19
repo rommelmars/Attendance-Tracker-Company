@@ -9,27 +9,29 @@ from datetime import date, datetime, timedelta
 from django.db.models import Q
 from django.contrib import messages
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.contrib.auth.models import User
+from collections import defaultdict
 
 # 👤 LOGIN
 def login_view(request):
-    print("Login view accessed")  # Debug print
-    
     if request.user.is_authenticated:
-        print(f"User {request.user.username} is already authenticated, redirecting to tracker")  # Debug print
-        return redirect('tracker')
+        if request.user.is_superuser:
+            return redirect('admin_dashboard')  # Redirect superusers to admin dashboard
+        else:
+            return redirect('tracker')  # Redirect regular users to tracker
 
     if request.method == 'POST':
         username = request.POST['username']
         password = request.POST['password']
-        print(f"Login attempt for user: {username}")  # Debug print
         
         user = authenticate(request, username=username, password=password)
         if user:
-            print(f"User {username} authenticated successfully")  # Debug print
             login(request, user)
-            return redirect('tracker')
+            if user.is_superuser:
+                return redirect('admin_dashboard')  # Redirect superusers to admin dashboard
+            else:
+                return redirect('tracker')  # Redirect regular users to tracker
         else:
-            print(f"Authentication failed for user: {username}")  # Debug print
             return render(request, 'login.html', {'error': 'Invalid credentials'})
 
     return render(request, 'login.html')
@@ -332,8 +334,129 @@ def dashboard(request):
 # 📊 ADMIN DASHBOARD
 @user_passes_test(lambda u: u.is_superuser)
 def admin_dashboard(request):
-    logs = AttendanceLog.objects.select_related('user').order_by('-timestamp')
-    return render(request, 'admin_dashboard.html', {'logs': logs})
+    # Get filter parameters
+    selected_user = request.GET.get('user')
+    selected_date = request.GET.get('date')
+    
+    # Get page size from request (default to 5 if not specified)
+    page_size = request.GET.get('size', '5')
+    try:
+        page_size = int(page_size)
+        # Limit page size options to valid choices
+        if page_size not in [5, 10, 25, 50]:
+            page_size = 5
+    except ValueError:
+        page_size = 5
+    
+    # Base query for logs
+    logs_query = AttendanceLog.objects.select_related('user')
+    
+    # Apply filters
+    if selected_user:
+        logs_query = logs_query.filter(user_id=selected_user)
+        selected_user_obj = User.objects.get(id=selected_user)
+    else:
+        selected_user_obj = None
+        
+    if selected_date:
+        try:
+            filter_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+            logs_query = logs_query.filter(timestamp__date=filter_date)
+        except ValueError:
+            pass
+    
+    # Order logs
+    logs = logs_query.order_by('-timestamp')
+    
+    # Pagination with the selected page size
+    page = request.GET.get('page', 1)
+    paginator = Paginator(logs, page_size)
+    
+    try:
+        page_obj = paginator.page(page)
+    except PageNotAnInteger:
+        page_obj = paginator.page(1)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+    
+    # Get all users (for filter dropdown and sidebar)
+    users = User.objects.all().order_by('username')
+    
+    # Calculate current stats
+    today = date.today()
+    total_users = User.objects.count()
+    
+    # Track user statuses for sidebar
+    clocked_in_users = set()
+    break_users = set()
+    lunch_users = set()
+    
+    # Find users currently clocked in, on break, or lunch
+    for user_obj in users:
+        # Check if user is clocked in
+        clock_ins_today = AttendanceLog.objects.filter(
+            user=user_obj,
+            action='clock_in',
+            timestamp__date=today
+        ).count()
+        
+        clock_outs_today = AttendanceLog.objects.filter(
+            user=user_obj,
+            action='clock_out',
+            timestamp__date=today
+        ).count()
+        
+        if clock_ins_today > clock_outs_today:
+            clocked_in_users.add(user_obj.id)
+            
+            # Check if they're on break or lunch
+            try:
+                time_allocation = DailyTimeAllocation.objects.get(user=user_obj, date=today)
+                if time_allocation.break_start_time:
+                    break_users.add(user_obj.id)
+                if time_allocation.lunch_start_time:
+                    lunch_users.add(user_obj.id)
+            except DailyTimeAllocation.DoesNotExist:
+                pass
+    
+    # Get time allocations for all users for their log dates
+    # Create a nested dictionary: {user_id: {date: allocation}}
+    user_time_allocations = defaultdict(dict)
+    
+    # Get unique user and date combinations from the logs
+    user_date_pairs = logs.values('user_id', 'timestamp__date').distinct()
+    
+    for pair in user_date_pairs:
+        user_id = pair['user_id']
+        log_date = pair['timestamp__date']
+        
+        # Get or create time allocation for this user and date
+        time_allocation, _ = DailyTimeAllocation.objects.get_or_create(
+            user_id=user_id,
+            date=log_date
+        )
+        
+        # Store in our dictionary
+        user_time_allocations[user_id][log_date] = time_allocation
+    
+    context = {
+        'logs': page_obj,
+        'page_obj': page_obj,
+        'users': users,
+        'selected_user': selected_user,
+        'selected_user_obj': selected_user_obj,
+        'selected_date': selected_date,
+        'total_users': total_users,
+        'users_clocked_in': len(clocked_in_users),
+        'users_on_break': len(break_users),
+        'users_on_lunch': len(lunch_users),
+        'user_time_allocations': dict(user_time_allocations),
+        'clocked_in_users': clocked_in_users,
+        'break_users': break_users,
+        'lunch_users': lunch_users,
+    }
+    
+    return render(request, 'admin_dashboard.html', context)
 
 # 📤 EXPORT USER CSV
 @login_required

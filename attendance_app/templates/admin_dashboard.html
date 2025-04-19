@@ -1,97 +1,396 @@
-{% extends 'base.html' %}
+{% load static %}
+{% load custom_filters %}
 
-{% block content %}
-<div class="card shadow mb-4">
-    <div class="card-body">
-        <h2 class="card-title">Admin Dashboard</h2>
-        <p class="card-text lead">Monitor employee attendance records</p>
-        <hr>
-        
-        <div class="row mb-4">
-            <div class="col-md-6">
-                <form method="get" class="row g-3">
-                    <div class="col-auto">
-                        <label for="date" class="col-form-label">Filter by date:</label>
-                    </div>
-                    <div class="col-auto">
-                        <input type="date" id="date" name="date" value="{{ filter_date|date:'Y-m-d' }}" class="form-control">
-                    </div>
-                    <div class="col-auto">
-                        <button type="submit" class="btn btn-secondary">Filter</button>
-                    </div>
-                </form>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Attendance System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+    <link rel="stylesheet" href="{% static 'css/admin_dashboard.css' %}">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="navbar-left">
+            <!-- Replace text with logo image -->
+            <div class="logo-container">
+                <img src="{% static 'images/logo.jpeg' %}" alt="Company Logo" class="company-logo">
             </div>
-            <div class="col-md-6 text-md-end">
-                <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#exportModal">
-                    Export All Data
+        </div>
+        <div class="navbar-center">
+            <!-- Admin Actions Dropdown -->
+            <div class="dropdown">
+                <button class="dropdown-btn">
+                    <i class="fas fa-tools"></i> Admin Actions
                 </button>
-            </div>
-        </div>
-        
-        <h4>Attendance for {{ filter_date|date:"l, F j, Y" }}</h4>
-        
-        {% if user_logs %}
-            {% for user, logs in user_logs.items %}
-            <div class="card mb-3">
-                <div class="card-header bg-light">
-                    <h5 class="mb-0">{{ user.get_full_name|default:user.username }}</h5>
-                </div>
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-striped">
-                            <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Action</th>
-                                    <th>Note</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for log in logs %}
-                                <tr>
-                                    <td>{{ log.timestamp|time:"H:i:s" }}</td>
-                                    <td>{{ log.get_action_display }}</td>
-                                    <td>{{ log.note|default:"-" }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="dropdown-content">
+                    <a href="{% url 'admin_export_csv' %}" class="dropdown-item">
+                        <i class="fas fa-file-csv"></i> Export All Data
+                    </a>
+                    <a href="/admin/" class="dropdown-item">
+                        <i class="fas fa-cog"></i> Django Admin
+                    </a>
                 </div>
             </div>
-            {% endfor %}
-        {% else %}
-            <div class="alert alert-info">No attendance records found for this date.</div>
-        {% endif %}
-    </div>
-</div>
 
-<!-- Export Modal -->
-<div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="exportModalLabel">Export Attendance Data</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <form id="exportForm" action="{% url 'admin_export_csv' %}" method="get">
-                    <div class="mb-3">
-                        <label for="start_date" class="form-label">Start Date</label>
-                        <input type="date" class="form-control" id="start_date" name="start_date">
+            <!-- System Stats Dropdown -->
+            <div class="dropdown">
+                <button class="dropdown-btn">
+                    <i class="fas fa-chart-pie"></i> System Stats
+                </button>
+                <div class="dropdown-content stats-dropdown">
+                    <div class="stat-item">
+                        <span class="stat-label"><i class="fas fa-users"></i> Total Users:</span>
+                        <span class="stat-value-small">{{ total_users }}</span>
                     </div>
-                    <div class="mb-3">
-                        <label for="end_date" class="form-label">End Date</label>
-                        <input type="date" class="form-control" id="end_date" name="end_date">
+                    <div class="stat-item">
+                        <span class="stat-label"><i class="fas fa-clock"></i> Clocked In:</span>
+                        <span class="stat-value-small">{{ users_clocked_in }}</span>
                     </div>
-                    <div class="text-muted small">Leave blank to export the current month's data.</div>
-                </form>
+                    <div class="stat-item">
+                        <span class="stat-label"><i class="fas fa-coffee"></i> On Break:</span>
+                        <span class="stat-value-small">{{ users_on_break }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label"><i class="fas fa-utensils"></i> On Lunch:</span>
+                        <span class="stat-value-small">{{ users_on_lunch }}</span>
+                    </div>
+                </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="submit" form="exportForm" class="btn btn-primary">Export CSV</button>
+        </div>
+        <div class="navbar-right">
+            <span class="welcome-text">Welcome, {{ user.username }} (Admin)</span>
+            <a href="{% url 'logout' %}" class="btn btn-outline-light logout-btn">
+                <i class="fas fa-sign-out-alt"></i> Logout
+            </a>
+        </div>
+    </nav>
+
+    <div class="main-container">
+        <!-- Left Sidebar with Users List -->
+        <div class="sidebar users-sidebar">
+            <div class="sidebar-header sticky-header">
+                <h3 class="sidebar-title">All Users</h3>
+                <div class="search-container">
+                    <input type="text" id="user-search" class="search-input" placeholder="Search users...">
+                    <i class="fas fa-search search-icon"></i>
+                </div>
+            </div>
+            <div class="users-list">
+                <a href="{% url 'admin_dashboard' %}" class="user-item {% if not selected_user %}active{% endif %}">
+                    <i class="fas fa-users"></i>
+                    <span class="user-name">All Users</span>
+                </a>
+                {% for user_item in users %}
+                <a href="{% url 'admin_dashboard' %}?user={{ user_item.id }}" 
+                   class="user-item {% if selected_user == user_item.id|stringformat:'i' %}active{% endif %}"
+                   data-username="{{ user_item.username|lower }}">
+                    <div class="user-avatar">{{ user_item.username|make_list|first|upper }}</div>
+                    <div class="user-info">
+                        <span class="user-name">{{ user_item.username }}</span>
+                        <span class="user-status">
+                            {% with user_id=user_item.id %}
+                                {% if user_id in clocked_in_users %}
+                                    {% if user_id in break_users %}
+                                        <span class="status-badge break">On Break</span>
+                                    {% elif user_id in lunch_users %}
+                                        <span class="status-badge lunch">On Lunch</span>
+                                    {% else %}
+                                        <span class="status-badge active">Active</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="status-badge inactive">Inactive</span>
+                                {% endif %}
+                            {% endwith %}
+                        </span>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <!-- Main Content Area -->
+        <div class="content-area">
+            <div class="card main-card">
+                <div class="card-header">
+                    <div class="header-row">
+                        <h2 class="section-title">
+                            {% if selected_user_obj %}
+                                Activity for {{ selected_user_obj.username }}
+                            {% else %}
+                                All User Activity
+                            {% endif %}
+                        </h2>
+                        
+                        <!-- Compact date filter button -->
+                        <div class="compact-filter">
+                            <button type="button" class="btn btn-outline-primary filter-toggle-btn" id="filter-toggle">
+                                <i class="fas fa-filter"></i> Filter
+                                {% if selected_date %}<span class="filter-badge">{{ selected_date|date:'Y-m-d' }}</span>{% endif %}
+                            </button>
+                            
+                            <!-- Hidden filter form that shows on click -->
+                            <div class="floating-filter" id="floating-filter">
+                                <form method="get" class="filter-form">
+                                    {% if selected_user %}
+                                        <input type="hidden" name="user" value="{{ selected_user }}">
+                                    {% endif %}
+                                    
+                                    <div class="filter-group">
+                                        <label for="date-filter">Filter by Date:</label>
+                                        <input type="text" id="date-filter" name="date" class="filter-input date-picker" 
+                                               placeholder="Select a date" value="{{ selected_date|date:'Y-m-d' }}">
+                                    </div>
+                                    
+                                    <div class="filter-actions">
+                                        <button type="submit" class="btn btn-primary filter-btn">Apply</button>
+                                        <a href="{% if selected_user %}{% url 'admin_dashboard' %}?user={{ selected_user }}{% else %}{% url 'admin_dashboard' %}{% endif %}" class="btn btn-outline-secondary reset-btn">Reset</a>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Activity logs - maximized area -->
+                <div class="logs-section">
+                    {% if logs %}
+                    <table class="activity-table">
+                        <thead>
+                            <tr>
+                                {% if not selected_user_obj %}<th>Username</th>{% endif %}
+                                <th>Date</th>
+                                <th>Time</th>
+                                <th>Action</th>
+                                <th>Break/Lunch Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in logs %}
+                            <tr class="{% if log.action == 'break_start' or log.action == 'lunch_start' %}start-activity{% elif log.action == 'break_end' or log.action == 'lunch_end' %}end-activity{% elif log.action == 'combined_break_start' %}combined-start{% elif log.action == 'combined_break_end' %}combined-end{% elif log.action == 'clock_in' %}clock-in{% elif log.action == 'clock_out' %}clock-out{% endif %}">
+                                {% if not selected_user_obj %}<td>{{ log.user.username }}</td>{% endif %}
+                                <td>{{ log.timestamp|date:"Y-m-d" }}</td>
+                                <td>{{ log.timestamp|time:"g:i A" }}</td>
+                                <td>
+                                    {% if log.action == 'combined_break_start' %}
+                                        Combined Break Start
+                                    {% elif log.action == 'combined_break_end' %}
+                                        Combined Break End
+                                    {% else %}
+                                        {{ log.action|title|cut:"_"|capfirst }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if log.action == 'break_end' or log.action == 'lunch_end' or log.action == 'combined_break_end' %}
+                                        {% with date=log.timestamp.date %}
+                                            {% with time_allocation=user_time_allocations|get_item:log.user.id|get_item:date %}
+                                                {% if time_allocation %}
+                                                    {% if log.action == 'break_end' %}
+                                                        {% if time_allocation.is_break_exceeded %}
+                                                            <span class="text-danger">Exceeded by {{ time_allocation.break_minutes_exceeded }} min</span>
+                                                        {% else %}
+                                                            Break: {{ time_allocation.break_minutes_remaining }} min left
+                                                        {% endif %}
+                                                    {% elif log.action == 'lunch_end' %}
+                                                        {% if time_allocation.is_lunch_exceeded %}
+                                                            <span class="text-danger">Exceeded by {{ time_allocation.lunch_minutes_exceeded }} min</span>
+                                                        {% else %}
+                                                            Lunch: {{ time_allocation.lunch_minutes_remaining }} min left
+                                                        {% endif %}
+                                                    {% elif log.action == 'combined_break_end' %}
+                                                        {% if time_allocation.is_break_exceeded or time_allocation.is_lunch_exceeded %}
+                                                            <span class="text-danger">Exceeded limits</span>
+                                                        {% else %}
+                                                            B: {{ time_allocation.break_minutes_remaining }}m, L: {{ time_allocation.lunch_minutes_remaining }}m left
+                                                        {% endif %}
+                                                    {% endif %}
+                                                {% endif %}
+                                            {% endwith %}
+                                        {% endwith %}
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    
+                    <!-- Pagination showing 5 items per page -->
+                    <div class="pagination-container">
+                        {% if logs %}
+                        <div class="pagination-results">
+                            Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ page_obj.paginator.count }} entries
+                            <select id="page-size-selector" class="page-size-selector">
+                                <option value="5" {% if request.GET.size == '5' or not request.GET.size %}selected{% endif %}>5 per page</option>
+                                <option value="10" {% if request.GET.size == '10' %}selected{% endif %}>10 per page</option>
+                                <option value="25" {% if request.GET.size == '25' %}selected{% endif %}>25 per page</option>
+                                <option value="50" {% if request.GET.size == '50' %}selected{% endif %}>50 per page</option>
+                            </select>
+                        </div>
+                        {% endif %}
+                        
+                        {% if page_obj.has_other_pages %}
+                        <div class="pagination">
+                            <!-- First page and previous buttons -->
+                            <div class="pagination-group">
+                                <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page=1" 
+                                   class="pagination-btn pagination-first {% if not page_obj.has_previous %}disabled{% endif %}">
+                                    <i class="fas fa-angle-double-left pagination-icon"></i>
+                                </a>
+                                
+                                <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page={% if page_obj.has_previous %}{{ page_obj.previous_page_number }}{% else %}1{% endif %}" 
+                                   class="pagination-btn {% if not page_obj.has_previous %}disabled{% endif %}">
+                                    <i class="fas fa-angle-left pagination-icon"></i>
+                                </a>
+                            </div>
+                            
+                            <!-- Page numbers - showing at most 5 page numbers at once -->
+                            <div class="page-numbers">
+                                {% if page_obj.number > 3 %}
+                                    <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page=1" class="pagination-btn">1</a>
+                                    {% if page_obj.number > 4 %}
+                                        <span class="ellipsis">...</span>
+                                    {% endif %}
+                                {% endif %}
+                                
+                                {% for i in page_obj.paginator.page_range %}
+                                    {% if i >= page_obj.number|add:"-2" and i <= page_obj.number|add:"2" %}
+                                        {% if i == page_obj.number %}
+                                            <span class="pagination-btn active">{{ i }}</span>
+                                        {% else %}
+                                            <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page={{ i }}" class="pagination-btn">{{ i }}</a>
+                                        {% endif %}
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                {% if page_obj.number < page_obj.paginator.num_pages|add:"-2" %}
+                                    {% if page_obj.number < page_obj.paginator.num_pages|add:"-3" %}
+                                        <span class="ellipsis">...</span>
+                                    {% endif %}
+                                    <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page={{ page_obj.paginator.num_pages }}" class="pagination-btn">{{ page_obj.paginator.num_pages }}</a>
+                                {% endif %}
+                            </div>
+                            
+                            <!-- Next and last page buttons -->
+                            <div class="pagination-group">
+                                <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page={% if page_obj.has_next %}{{ page_obj.next_page_number }}{% else %}{{ page_obj.paginator.num_pages }}{% endif %}" 
+                                   class="pagination-btn {% if not page_obj.has_next %}disabled{% endif %}">
+                                    <i class="fas fa-angle-right pagination-icon"></i>
+                                </a>
+                                
+                                <a href="?{% if selected_user %}user={{ selected_user }}&{% endif %}{% if selected_date %}date={{ selected_date|date:'Y-m-d' }}&{% endif %}{% if request.GET.size %}size={{ request.GET.size }}&{% endif %}page={{ page_obj.paginator.num_pages }}" 
+                                   class="pagination-btn pagination-last {% if page_obj.number == page_obj.paginator.num_pages %}disabled{% endif %}">
+                                    <i class="fas fa-angle-double-right pagination-icon"></i>
+                                </a>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="no-activity">
+                        <p><i class="fas fa-info-circle"></i> No activities found for the selected criteria.</p>
+                    </div>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
-</div>
-{% endblock %}
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize date picker
+            flatpickr("#date-filter", {
+                dateFormat: "Y-m-d",
+                maxDate: "today",
+            });
+            
+            // User search functionality
+            const searchInput = document.getElementById('user-search');
+            const userItems = document.querySelectorAll('.user-item[data-username]');
+            
+            searchInput.addEventListener('input', function() {
+                const query = this.value.trim().toLowerCase();
+                
+                userItems.forEach(function(item) {
+                    const username = item.dataset.username;
+                    if (username.includes(query) || query === '') {
+                        item.style.display = '';
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+            });
+            
+            // Toggle dropdown on click
+            const dropdowns = document.querySelectorAll('.dropdown');
+            
+            dropdowns.forEach(dropdown => {
+                const dropdownBtn = dropdown.querySelector('.dropdown-btn');
+                const dropdownContent = dropdown.querySelector('.dropdown-content');
+                
+                dropdownBtn.addEventListener('click', () => {
+                    // Close all other dropdowns first
+                    dropdowns.forEach(otherDropdown => {
+                        if (otherDropdown !== dropdown) {
+                            otherDropdown.querySelector('.dropdown-content').classList.remove('show');
+                        }
+                    });
+                    
+                    // Toggle the clicked dropdown
+                    dropdownContent.classList.toggle('show');
+                });
+            });
+            
+            // Close dropdowns when clicking outside
+            window.addEventListener('click', (event) => {
+                if (!event.target.matches('.dropdown-btn') && !event.target.closest('.dropdown-content')) {
+                    document.querySelectorAll('.dropdown-content').forEach(content => {
+                        content.classList.remove('show');
+                    });
+                }
+            });
+
+            // Filter toggle functionality
+            const filterToggleBtn = document.getElementById('filter-toggle');
+            const floatingFilter = document.getElementById('floating-filter');
+            
+            filterToggleBtn.addEventListener('click', function() {
+                floatingFilter.classList.toggle('show');
+            });
+            
+            // Close filter when clicking outside
+            document.addEventListener('click', function(event) {
+                if (!event.target.closest('.compact-filter')) {
+                    floatingFilter.classList.remove('show');
+                }
+            });
+            
+            // Prevent filter from closing when clicking inside it
+            floatingFilter.addEventListener('click', function(event) {
+                event.stopPropagation();
+            });
+
+            // Page size selector handler
+            const pageSizeSelector = document.getElementById('page-size-selector');
+            if (pageSizeSelector) {
+                pageSizeSelector.addEventListener('change', function() {
+                    // Get current URL parameters
+                    const urlParams = new URLSearchParams(window.location.search);
+                    
+                    // Update the size parameter
+                    urlParams.set('size', this.value);
+                    
+                    // Reset to page 1 when changing page size
+                    urlParams.set('page', '1');
+                    
+                    // Redirect to new URL with updated parameters
+                    window.location.href = window.location.pathname + '?' + urlParams.toString();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
