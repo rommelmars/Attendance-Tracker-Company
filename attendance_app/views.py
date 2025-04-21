@@ -5,12 +5,14 @@ from django.http import HttpResponse
 from .models import AttendanceLog, DailyTimeAllocation
 from django.utils import timezone
 import csv
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 from django.db.models import Q
 from django.contrib import messages
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.contrib.auth.models import User
 from collections import defaultdict
+from django.utils.timezone import localtime
+import pytz
 
 # 👤 LOGIN
 def login_view(request):
@@ -51,14 +53,12 @@ def tracker_view(request):
         try:
             selected_date = datetime.strptime(requested_date, '%Y-%m-%d').date()
             today = selected_date
-            is_today = today == date.today()
+            is_today = (today == date.today())
         except ValueError:
-            selected_date = None
-            today = date.today()
+            selected_date = today = date.today()
             is_today = True
     else:
-        selected_date = None
-        today = date.today()
+        selected_date = today = date.today()
         is_today = True
     
     # Get or create daily time allocation for today
@@ -66,6 +66,52 @@ def tracker_view(request):
         user=request.user,
         date=today,
     )
+    
+    # Define shift hours (10 PM to 7 AM next day)
+    now = localtime(timezone.now())
+    current_date = now.date()
+    
+    # Create datetime objects for start and end of shift
+    # If current time is before 7 AM, shift started yesterday at 10 PM
+    if now.time() < time(7, 0):
+        shift_start_date = current_date - timedelta(days=1)
+        shift_end_date = current_date
+    else:
+        shift_start_date = current_date
+        shift_end_date = current_date + timedelta(days=1)
+        
+    shift_start = datetime.combine(shift_start_date, time(22, 0)).replace(tzinfo=pytz.timezone('Asia/Manila'))
+    shift_end = datetime.combine(shift_end_date, time(7, 0)).replace(tzinfo=pytz.timezone('Asia/Manila'))
+    
+    # Check for late clock in
+    clocked_in_late = False
+    minutes_late = 0
+    first_clock_in = None
+    
+    if is_today:
+        # Get the first clock in for today or yesterday's shift
+        if now.time() < time(7, 0):
+            # We're before 7 AM, so check yesterday's clock-ins
+            first_clock_in = AttendanceLog.objects.filter(
+                user=request.user,
+                action='clock_in',
+                timestamp__date__gte=shift_start_date,
+                timestamp__date__lte=shift_end_date
+            ).order_by('timestamp').first()
+        else:
+            # We're after 7 AM, so check today's clock-ins
+            first_clock_in = AttendanceLog.objects.filter(
+                user=request.user,
+                action='clock_in',
+                timestamp__date=shift_start_date
+            ).order_by('timestamp').first()
+        
+        if first_clock_in:
+            # If clocked in after 10 PM
+            if first_clock_in.timestamp > shift_start:
+                clocked_in_late = True
+                time_diff = first_clock_in.timestamp - shift_start
+                minutes_late = int(time_diff.total_seconds() // 60)
     
     # Retrieve logs for the user on the selected date
     logs = AttendanceLog.objects.filter(user=request.user, timestamp__date=today).order_by('-timestamp')
@@ -83,19 +129,25 @@ def tracker_view(request):
     
     # Calculate current status
     current_status = 'idle'
-    ongoing_break = False
+    ongoing_break1 = False
+    ongoing_break2 = False
     ongoing_lunch = False
     
     # Check if there's an ongoing break or lunch
-    if time_allocation.break_start_time and not time_allocation.break_start_time + timedelta(minutes=30) < timezone.now():
-        ongoing_break = True
-        current_status = 'on_break'
+    if time_allocation.break1_start_time:
+        ongoing_break1 = True
+        current_status = 'on_break1'
     
-    if time_allocation.lunch_start_time and not time_allocation.lunch_start_time + timedelta(minutes=60) < timezone.now():
-        ongoing_lunch = True
-        current_status = 'on_lunch'
+    if time_allocation.break2_start_time:
+        ongoing_break2 = True
+        current_status = 'on_break2'
 
-    # Check if user is clocked in today
+    if time_allocation.lunch_start_time:
+        ongoing_lunch = True
+        current_status = 'at_lunch'
+
+    # Check if user is clocked in across days
+    # First, check if the user is clocked in today
     is_clocked_in = False
     clocked_in_today = AttendanceLog.objects.filter(
         user=request.user, 
@@ -109,219 +161,256 @@ def tracker_view(request):
         timestamp__date=today
     ).exists()
     
+    # If viewing today, we also need to check if they're still clocked in from yesterday
+    if is_today:
+        # If not clocked in today, check if they clocked in yesterday but didn't clock out
+        yesterday = date.today() - timedelta(days=1)
+        if not clocked_in_today and not clocked_out_today:
+            yesterday_clock_in = AttendanceLog.objects.filter(
+                user=request.user,
+                action='clock_in',
+                timestamp__date=yesterday
+            ).order_by('-timestamp').first()
+            
+            yesterday_clock_out = AttendanceLog.objects.filter(
+                user=request.user,
+                action='clock_out',
+                timestamp__date=yesterday
+            ).order_by('-timestamp').first()
+            
+            # If they clocked in yesterday and either didn't clock out or clocked in after clocking out
+            if yesterday_clock_in and (not yesterday_clock_out or yesterday_clock_in.timestamp > yesterday_clock_out.timestamp):
+                # They're still clocked in from yesterday
+                is_clocked_in = True
+                # Create a note that they're still clocked in from yesterday
+                messages.info(request, f"You are still clocked in from yesterday ({yesterday.strftime('%Y-%m-%d')})")
+    
     # If the user has clocked in but not clocked out, they are considered clocked in
-    if clocked_in_today:
-        # Count clock ins and clock outs to determine current status
-        clock_ins = AttendanceLog.objects.filter(
-            user=request.user,
-            action='clock_in',
-            timestamp__date=today
-        ).count()
-        
-        clock_outs = AttendanceLog.objects.filter(
-            user=request.user,
-            action='clock_out',
-            timestamp__date=today
-        ).count()
-        
-        is_clocked_in = clock_ins > clock_outs
+    if clocked_in_today and not clocked_out_today:
+        is_clocked_in = True
+        if not (ongoing_break1 or ongoing_break2 or ongoing_lunch):
+            current_status = 'working'
+    
+    # Only allow clock actions on the current day, not in history
+    can_perform_clock_actions = is_today
 
     # Handle POST request for action submission
     if request.method == 'POST':
         action = request.POST.get('action')
         
-        if action:
-            # Clock in is always allowed
-            if action == 'clock_in':
-                AttendanceLog.objects.create(user=request.user, action=action)
-                messages.success(request, "Successfully clocked in!")
+        # CLOCK IN
+        if action == 'clock_in':
+            now = timezone.now()
             
-            # All other actions require the user to be clocked in
-            elif action == 'clock_out':
-                AttendanceLog.objects.create(user=request.user, action=action)
-                messages.success(request, "Successfully clocked out!")
+            # Calculate if late
+            is_late = False
+            late_minutes = 0
             
-            # For break/lunch actions, check if user is clocked in
-            elif is_clocked_in:
-                if action == 'break_start' and time_allocation.break_minutes_remaining() > 0:
-                    if ongoing_break:
-                        messages.error(request, "You already have an ongoing break!")
-                    elif ongoing_lunch:
-                        messages.error(request, "You can't start a break while on lunch!")
-                    else:
-                        time_allocation.break_start_time = timezone.now()
-                        time_allocation.save()
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        messages.success(request, f"Break started! You have {time_allocation.break_minutes_remaining()} minutes remaining.")
-                
-                elif action == 'break_end':
-                    if ongoing_break:
-                        # Calculate minutes used in this break
-                        break_duration = timezone.now() - time_allocation.break_start_time
-                        minutes_used = round(break_duration.total_seconds() / 60)
-                        
-                        # Update time allocation
-                        time_allocation.break_minutes_used += minutes_used
-                        time_allocation.break_start_time = None
-                        time_allocation.save()
-                        
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        
-                        # Check if break time was exceeded
-                        if time_allocation.is_break_exceeded():
-                            messages.warning(request, 
-                                f"Break ended! You've used {minutes_used} minutes. " +
-                                f"You've exceeded your daily break allowance by {time_allocation.break_minutes_exceeded()} minutes."
-                            )
-                        else:
-                            messages.success(request, 
-                                f"Break ended! You've used {minutes_used} minutes. " +
-                                f"{time_allocation.break_minutes_remaining()} minutes remaining today."
-                            )
-                    else:
-                        messages.error(request, "You don't have an active break to end!")
-                
-                elif action == 'lunch_start' and time_allocation.lunch_minutes_remaining() > 0:
-                    if ongoing_lunch:
-                        messages.error(request, "You already have an ongoing lunch!")
-                    elif ongoing_break:
-                        messages.error(request, "You can't start lunch while on break!")
-                    else:
-                        time_allocation.lunch_start_time = timezone.now()
-                        time_allocation.save()
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        messages.success(request, f"Lunch started! You have {time_allocation.lunch_minutes_remaining()} minutes remaining.")
-                
-                elif action == 'lunch_end':
-                    if ongoing_lunch:
-                        # Calculate minutes used in this lunch
-                        lunch_duration = timezone.now() - time_allocation.lunch_start_time
-                        minutes_used = round(lunch_duration.total_seconds() / 60)
-                        
-                        # Update time allocation
-                        time_allocation.lunch_minutes_used += minutes_used
-                        time_allocation.lunch_start_time = None
-                        time_allocation.save()
-                        
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        
-                        # Check if lunch time was exceeded
-                        if time_allocation.is_lunch_exceeded():
-                            messages.warning(request, 
-                                f"Lunch ended! You've used {minutes_used} minutes. " +
-                                f"You've exceeded your daily lunch allowance by {time_allocation.lunch_minutes_exceeded()} minutes."
-                            )
-                        else:
-                            messages.success(request, 
-                                f"Lunch ended! You've used {minutes_used} minutes. " +
-                                f"{time_allocation.lunch_minutes_remaining()} minutes remaining today."
-                            )
-                    else:
-                        messages.error(request, "You don't have an active lunch to end!")
-                
-                elif action == 'combined_break_start':
-                    if ongoing_break or ongoing_lunch:
-                        messages.error(request, "You already have an ongoing break or lunch!")
-                    else:
-                        # Start using break time first
-                        time_allocation.break_start_time = timezone.now()
-                        time_allocation.save()
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        combined_minutes = time_allocation.break_minutes_remaining() + time_allocation.lunch_minutes_remaining()
-                        messages.success(request, f"Combined break started! You have {combined_minutes} minutes available (Break: {time_allocation.break_minutes_remaining()} min, Lunch: {time_allocation.lunch_minutes_remaining()} min).")
-                
-                elif action == 'combined_break_end':
-                    if ongoing_break:
-                        # Calculate minutes used in this break
-                        break_duration = timezone.now() - time_allocation.break_start_time
-                        minutes_used = round(break_duration.total_seconds() / 60)
-                        
-                        # First use break time
-                        available_break_minutes = time_allocation.break_minutes_remaining()
-                        if minutes_used <= available_break_minutes:
-                            # All time comes from break
-                            time_allocation.break_minutes_used += minutes_used
-                            time_used_message = f"Break time used: {minutes_used} min"
-                            remaining_message = f"Break time remaining: {time_allocation.break_minutes_remaining()} min, Lunch: {time_allocation.lunch_minutes_remaining()} min"
-                        else:
-                            # Used all break time plus some lunch time
-                            lunch_minutes_used = minutes_used - available_break_minutes
-                            
-                            # Use all remaining break time
-                            time_allocation.break_minutes_used += available_break_minutes
-                            
-                            # Then use lunch time for the remainder
-                            time_allocation.lunch_minutes_used += lunch_minutes_used
-                            
-                            time_used_message = f"Break time used: {available_break_minutes} min, Lunch time used: {lunch_minutes_used} min"
-                            
-                            if time_allocation.lunch_minutes_remaining() > 0:
-                                remaining_message = f"Break time: 0 min, Lunch time remaining: {time_allocation.lunch_minutes_remaining()} min"
-                            else:
-                                exceeded = time_allocation.lunch_minutes_exceeded()
-                                remaining_message = f"You've exceeded your combined break/lunch allowance by {exceeded} minutes."
-                        
-                        # Reset the break start time
-                        time_allocation.break_start_time = None
-                        time_allocation.save()
-                        
-                        # Create the log
-                        AttendanceLog.objects.create(user=request.user, action=action)
-                        
-                        # Success message
-                        if time_allocation.is_break_exceeded() or time_allocation.is_lunch_exceeded():
-                            messages.warning(request, f"Combined break ended! {time_used_message}. {remaining_message}")
-                        else:
-                            messages.success(request, f"Combined break ended! {time_used_message}. {remaining_message}")
-                    
-                    elif ongoing_lunch:
-                        messages.error(request, "You have an ongoing lunch, not a combined break. Please end your lunch instead.")
-                    else:
-                        messages.error(request, "You don't have an active combined break to end!")
+            # Check if clock-in is after shift start time (10 PM)
+            shift_start_time = time(22, 0)
+            current_time = now.time()
             
-            # Show error if user tries to take a break without clocking in
+            # If it's between midnight and 7 AM, the shift started at 10 PM yesterday
+            if current_time < time(7, 0):
+                shift_date = now.date() - timedelta(days=1)
             else:
-                messages.error(request, "You must clock in before you can perform this action!")
+                shift_date = now.date()
+            
+            shift_start_datetime = datetime.combine(shift_date, shift_start_time)
+            shift_start_datetime = shift_start_datetime.replace(tzinfo=pytz.timezone('Asia/Manila'))
+            
+            if now > shift_start_datetime:
+                is_late = True
+                time_diff = now - shift_start_datetime
+                late_minutes = int(time_diff.total_seconds() // 60)
+            
+            # Create the log with late information if applicable
+            note = None
+            if is_late:
+                note = f"Late arrival: {late_minutes} minutes"
+            
+            log = AttendanceLog(user=request.user, action='clock_in', note=note)
+            log.save()
+            
+            if is_late:
+                messages.warning(request, f'Clocked in {late_minutes} minutes late!')
+            else:
+                messages.success(request, 'Clocked in successfully!')
+                
+            return redirect('tracker')
         
-        # Redirect to maintain POST-redirect-GET pattern
-        return redirect('tracker')
+        # CLOCK OUT
+        elif action == 'clock_out':
+            log = AttendanceLog(user=request.user, action='clock_out')
+            log.save()
+            messages.success(request, 'Clocked out successfully!')
+            return redirect('tracker')
+        
+        # START BREAK 1
+        elif action == 'start_break1':
+            if not is_clocked_in:
+                messages.error(request, 'You must be clocked in to take a break.')
+            elif ongoing_break1 or ongoing_break2 or ongoing_lunch:
+                messages.error(request, 'You are already on a break or lunch.')
+            elif time_allocation.is_break1_exceeded():
+                messages.error(request, 'You have already used all your break 1 time (15 minutes).')
+            else:
+                time_allocation.break1_start_time = timezone.now()
+                time_allocation.save()
+                log = AttendanceLog(user=request.user, action='start_break1')
+                log.save()
+                messages.success(request, 'Break 1 started!')
+            return redirect('tracker')
+        
+        # START BREAK 2
+        elif action == 'start_break2':
+            if not is_clocked_in:
+                messages.error(request, 'You must be clocked in to take a break.')
+            elif ongoing_break1 or ongoing_break2 or ongoing_lunch:
+                messages.error(request, 'You are already on a break or lunch.')
+            elif time_allocation.is_break2_exceeded():
+                messages.error(request, 'You have already used all your break 2 time (15 minutes).')
+            else:
+                time_allocation.break2_start_time = timezone.now()
+                time_allocation.save()
+                log = AttendanceLog(user=request.user, action='start_break2')
+                log.save()
+                messages.success(request, 'Break 2 started!')
+            return redirect('tracker')
+        
+        # END BREAK 1
+        elif action == 'end_break1':
+            if not ongoing_break1:
+                messages.error(request, 'No break 1 in progress.')
+            else:
+                # Calculate minutes used
+                break_duration = timezone.now() - time_allocation.break1_start_time
+                minutes_used = break_duration.total_seconds() // 60
+                
+                # Update time allocation
+                time_allocation.break1_minutes_used += int(minutes_used)
+                time_allocation.break1_start_time = None
+                time_allocation.save()
+                
+                log = AttendanceLog(
+                    user=request.user, 
+                    action='end_break1',
+                    note=f'Break 1 duration: {int(minutes_used)} minutes'
+                )
+                log.save()
+                messages.success(request, f'Break 1 ended. You used {int(minutes_used)} minutes.')
+            return redirect('tracker')
+        
+        # END BREAK 2
+        elif action == 'end_break2':
+            if not ongoing_break2:
+                messages.error(request, 'No break 2 in progress.')
+            else:
+                # Calculate minutes used
+                break_duration = timezone.now() - time_allocation.break2_start_time
+                minutes_used = break_duration.total_seconds() // 60
+                
+                # Update time allocation
+                time_allocation.break2_minutes_used += int(minutes_used)
+                time_allocation.break2_start_time = None
+                time_allocation.save()
+                
+                log = AttendanceLog(
+                    user=request.user, 
+                    action='end_break2',
+                    note=f'Break 2 duration: {int(minutes_used)} minutes'
+                )
+                log.save()
+                messages.success(request, f'Break 2 ended. You used {int(minutes_used)} minutes.')
+            return redirect('tracker')
+        
+        # START LUNCH
+        elif action == 'start_lunch':
+            if not is_clocked_in:
+                messages.error(request, 'You must be clocked in to take lunch.')
+            elif ongoing_break1 or ongoing_break2 or ongoing_lunch:
+                messages.error(request, 'You are already on a break or lunch.')
+            elif time_allocation.is_lunch_exceeded():
+                messages.error(request, 'You have already used all your lunch time (60 minutes).')
+            else:
+                time_allocation.lunch_start_time = timezone.now()
+                time_allocation.save()
+                log = AttendanceLog(user=request.user, action='start_lunch')
+                log.save()
+                messages.success(request, 'Lunch started!')
+            return redirect('tracker')
+        
+        # END LUNCH
+        elif action == 'end_lunch':
+            if not ongoing_lunch:
+                messages.error(request, 'No lunch in progress.')
+            else:
+                # Calculate minutes used
+                lunch_duration = timezone.now() - time_allocation.lunch_start_time
+                minutes_used = lunch_duration.total_seconds() // 60
+                
+                # Update time allocation
+                time_allocation.lunch_minutes_used += int(minutes_used)
+                time_allocation.lunch_start_time = None
+                time_allocation.save()
+                
+                log = AttendanceLog(
+                    user=request.user, 
+                    action='end_lunch',
+                    note=f'Lunch duration: {int(minutes_used)} minutes'
+                )
+                log.save()
+                messages.success(request, f'Lunch ended. You used {int(minutes_used)} minutes.')
+            return redirect('tracker')
+    
+    # Calculate percentages for progress bars
+    break1_percentage = min(time_allocation.break1_minutes_used / 15 * 100, 100) if time_allocation.break1_minutes_used > 0 else 0
+    break2_percentage = min(time_allocation.break2_minutes_used / 15 * 100, 100) if time_allocation.break2_minutes_used > 0 else 0
+    lunch_percentage = min(time_allocation.lunch_minutes_used / 60 * 100, 100) if time_allocation.lunch_minutes_used > 0 else 0
     
     # Prepare context with all necessary data
     context = {
         'logs': logs,
-        'page_obj': page_obj,  # Add this
+        'page_obj': page_obj,
         'today': date.today(),
         'selected_date': selected_date,
         'is_today': is_today,
-        'break_minutes_remaining': time_allocation.break_minutes_remaining(),
+        'break1_minutes_remaining': time_allocation.break1_minutes_remaining(),
+        'break2_minutes_remaining': time_allocation.break2_minutes_remaining(),
         'lunch_minutes_remaining': time_allocation.lunch_minutes_remaining(),
-        'break_minutes_exceeded': time_allocation.break_minutes_exceeded(),
+        'break1_minutes_exceeded': time_allocation.break1_minutes_exceeded(),
+        'break2_minutes_exceeded': time_allocation.break2_minutes_exceeded(),
         'lunch_minutes_exceeded': time_allocation.lunch_minutes_exceeded(),
-        'is_break_exceeded': time_allocation.is_break_exceeded(),
+        'is_break1_exceeded': time_allocation.is_break1_exceeded(),
+        'is_break2_exceeded': time_allocation.is_break2_exceeded(),
         'is_lunch_exceeded': time_allocation.is_lunch_exceeded(),
-        'ongoing_break': ongoing_break,
+        'ongoing_break1': ongoing_break1,
+        'ongoing_break2': ongoing_break2,
         'ongoing_lunch': ongoing_lunch,
         'current_status': current_status,
-        'break_minutes_used': time_allocation.break_minutes_used,
+        'break1_minutes_used': time_allocation.break1_minutes_used,
+        'break2_minutes_used': time_allocation.break2_minutes_used,
         'lunch_minutes_used': time_allocation.lunch_minutes_used,
-        'page': page,  # Add this to preserve page number during requests
+        'break1_percentage': break1_percentage,
+        'break2_percentage': break2_percentage,
+        'lunch_percentage': lunch_percentage,
         'is_clocked_in': is_clocked_in,
+        'can_perform_clock_actions': can_perform_clock_actions,
+        'clocked_in_late': clocked_in_late,
+        'minutes_late': minutes_late,
+        'shift_start_time': '10:00 PM',
+        'shift_end_time': '7:00 AM',
     }
     
     # Add timestamps for ongoing activities
-    if ongoing_break:
-        break_start = time_allocation.break_start_time
-        break_elapsed = timezone.now() - break_start
-        break_elapsed_minutes = round(break_elapsed.total_seconds() / 60)
-        context['break_elapsed_minutes'] = break_elapsed_minutes
-        context['break_start_time'] = break_start
+    if ongoing_break1:
+        context['break1_start_time'] = time_allocation.break1_start_time
+    
+    if ongoing_break2:
+        context['break2_start_time'] = time_allocation.break2_start_time
     
     if ongoing_lunch:
-        lunch_start = time_allocation.lunch_start_time
-        lunch_elapsed = timezone.now() - lunch_start
-        lunch_elapsed_minutes = round(lunch_elapsed.total_seconds() / 60)
-        context['lunch_elapsed_minutes'] = lunch_elapsed_minutes
-        context['lunch_start_time'] = lunch_start
+        context['lunch_start_time'] = time_allocation.lunch_start_time
     
     return render(request, 'tracker.html', context)
 
@@ -412,7 +501,7 @@ def admin_dashboard(request):
             # Check if they're on break or lunch
             try:
                 time_allocation = DailyTimeAllocation.objects.get(user=user_obj, date=today)
-                if time_allocation.break_start_time:
+                if time_allocation.break1_start_time or time_allocation.break2_start_time:
                     break_users.add(user_obj.id)
                 if time_allocation.lunch_start_time:
                     lunch_users.add(user_obj.id)
@@ -467,7 +556,8 @@ def export_csv(request):
     writer = csv.writer(response)
     writer.writerow([
         'Date', 'Action', 'Time', 
-        'Break Minutes Remaining', 'Break Minutes Exceeded',
+        'Break 1 Minutes Remaining', 'Break 1 Minutes Exceeded',
+        'Break 2 Minutes Remaining', 'Break 2 Minutes Exceeded',
         'Lunch Minutes Remaining', 'Lunch Minutes Exceeded', 
         'Note'
     ])
@@ -486,15 +576,19 @@ def export_csv(request):
         ).first()
         
         # If no time allocation exists for this date, create default values
-        break_remaining = 30
+        break1_remaining = 15
+        break2_remaining = 15
         lunch_remaining = 60
-        break_exceeded = 0
+        break1_exceeded = 0
+        break2_exceeded = 0
         lunch_exceeded = 0
         
         if time_allocation:
-            break_remaining = time_allocation.break_minutes_remaining()
+            break1_remaining = time_allocation.break1_minutes_remaining()
+            break2_remaining = time_allocation.break2_minutes_remaining()
             lunch_remaining = time_allocation.lunch_minutes_remaining()
-            break_exceeded = time_allocation.break_minutes_exceeded()
+            break1_exceeded = time_allocation.break1_minutes_exceeded()
+            break2_exceeded = time_allocation.break2_minutes_exceeded()
             lunch_exceeded = time_allocation.lunch_minutes_exceeded()
             
         # Get logs for this specific date
@@ -504,104 +598,16 @@ def export_csv(request):
             # Format the time in local timezone with 12-hour AM/PM format
             local_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
             
-            # For break_end and lunch_end, calculate the updated remaining time
-            current_break_remaining = break_remaining
-            current_lunch_remaining = lunch_remaining
-            current_break_exceeded = break_exceeded
-            current_lunch_exceeded = lunch_exceeded
-            
-            if log.action == 'break_end' and time_allocation:
-                # Find the most recent break_start before this end
-                break_starts = logs.filter(
-                    action='break_start',
-                    timestamp__lt=log.timestamp,
-                    timestamp__date=log_date
-                ).order_by('-timestamp')
-                
-                if break_starts.exists():
-                    break_start = break_starts.first()
-                    break_duration = log.timestamp - break_start.timestamp
-                    minutes_used = round(break_duration.total_seconds() / 60)
-                    # Calculate the specific break metrics for this log
-                    total_used_so_far = minutes_used
-                    prev_break_ends = logs.filter(
-                        action='break_end',
-                        timestamp__lt=log.timestamp,
-                        timestamp__date=log_date
-                    )
-                    for prev_end in prev_break_ends:
-                        # Find corresponding start for each previous end
-                        prev_start = logs.filter(
-                            action='break_start',
-                            timestamp__lt=prev_end.timestamp,
-                            timestamp__date=log_date
-                        ).order_by('-timestamp').first()
-                        
-                        if prev_start:
-                            prev_duration = prev_end.timestamp - prev_start.timestamp
-                            prev_minutes = round(prev_duration.total_seconds() / 60)
-                            total_used_so_far += prev_minutes
-                    
-                    if total_used_so_far > 30:
-                        current_break_remaining = 0
-                        current_break_exceeded = total_used_so_far - 30
-                    else:
-                        current_break_remaining = 30 - total_used_so_far
-                        current_break_exceeded = 0
-                    
-            elif log.action == 'lunch_end' and time_allocation:
-                # Find the most recent lunch_start before this end
-                lunch_starts = logs.filter(
-                    action='lunch_start',
-                    timestamp__lt=log.timestamp,
-                    timestamp__date=log_date
-                ).order_by('-timestamp')
-                
-                if lunch_starts.exists():
-                    lunch_start = lunch_starts.first()
-                    lunch_duration = log.timestamp - lunch_start.timestamp
-                    minutes_used = round(lunch_duration.total_seconds() / 60)
-                    # Calculate the specific lunch metrics for this log
-                    total_used_so_far = minutes_used
-                    prev_lunch_ends = logs.filter(
-                        action='lunch_end',
-                        timestamp__lt=log.timestamp,
-                        timestamp__date=log_date
-                    )
-                    for prev_end in prev_lunch_ends:
-                        # Find corresponding start for each previous end
-                        prev_start = logs.filter(
-                            action='lunch_start',
-                            timestamp__lt=prev_end.timestamp,
-                            timestamp__date=log_date
-                        ).order_by('-timestamp').first()
-                        
-                        if prev_start:
-                            prev_duration = prev_end.timestamp - prev_start.timestamp
-                            prev_minutes = round(prev_duration.total_seconds() / 60)
-                            total_used_so_far += prev_minutes
-                    
-                    if total_used_so_far > 60:
-                        current_lunch_remaining = 0
-                        current_lunch_exceeded = total_used_so_far - 60
-                    else:
-                        current_lunch_remaining = 60 - total_used_so_far
-                        current_lunch_exceeded = 0
-            
-            action_display = log.action
-            if log.action == 'combined_break_start':
-                action_display = 'Combined Break Start'
-            elif log.action == 'combined_break_end':
-                action_display = 'Combined Break End'
-
             writer.writerow([
                 log_date, 
-                action_display, 
+                log.action, 
                 local_time,
-                current_break_remaining if log.action in ['break_start', 'break_end', 'combined_break_start', 'combined_break_end'] else '',
-                current_break_exceeded if (log.action == 'break_end' or log.action == 'combined_break_end') and current_break_exceeded > 0 else '',
-                current_lunch_remaining if log.action in ['lunch_start', 'lunch_end', 'combined_break_start', 'combined_break_end'] else '',
-                current_lunch_exceeded if (log.action == 'lunch_end' or log.action == 'combined_break_end') and current_lunch_exceeded > 0 else '',
+                break1_remaining if log.action in ['start_break1', 'end_break1'] else '',
+                break1_exceeded if log.action == 'end_break1' and break1_exceeded > 0 else '',
+                break2_remaining if log.action in ['start_break2', 'end_break2'] else '',
+                break2_exceeded if log.action == 'end_break2' and break2_exceeded > 0 else '',
+                lunch_remaining if log.action in ['start_lunch', 'end_lunch'] else '',
+                lunch_exceeded if log.action == 'end_lunch' and lunch_exceeded > 0 else '',
                 log.note or ''
             ])
     
@@ -616,10 +622,22 @@ def admin_export_csv(request):
     writer = csv.writer(response)
     writer.writerow([
         'Username', 'Date', 'Action', 'Time', 
-        'Break Minutes Remaining', 'Break Minutes Exceeded',
+        'Break 1 Minutes Remaining', 'Break 1 Minutes Exceeded',
+        'Break 2 Minutes Remaining', 'Break 2 Minutes Exceeded',
         'Lunch Minutes Remaining', 'Lunch Minutes Exceeded', 
         'Note'
     ])
     
-    # Similar implementation to the user export_csv but for all users
-    # [Implementation similar to above - add exceeded time columns]
+    logs = AttendanceLog.objects.select_related('user').order_by('timestamp')
+    
+    for log in logs:
+        local_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
+        writer.writerow([
+            log.user.username,
+            log.timestamp.date(),
+            log.action,
+            local_time,
+            '', '', '', '', '', '', log.note or ''
+        ])
+    
+    return response

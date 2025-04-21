@@ -15,35 +15,54 @@ class AttendanceLog(models.Model):
 class DailyTimeAllocation(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     date = models.DateField()
-    break_minutes_used = models.IntegerField(default=0)  # Out of 30 minutes
+    break1_minutes_used = models.IntegerField(default=0)  # Out of 15 minutes for first break
+    break2_minutes_used = models.IntegerField(default=0)  # Out of 15 minutes for second break
     lunch_minutes_used = models.IntegerField(default=0)  # Out of 60 minutes
-    break_start_time = models.DateTimeField(null=True, blank=True)
+    break1_start_time = models.DateTimeField(null=True, blank=True)
+    break2_start_time = models.DateTimeField(null=True, blank=True)
     lunch_start_time = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ['user', 'date']
 
-    def break_minutes_remaining(self):
-        return max(30 - self.break_minutes_used, 0)
+    def break1_minutes_remaining(self):
+        return max(15 - self.break1_minutes_used, 0)
+    
+    def break2_minutes_remaining(self):
+        return max(15 - self.break2_minutes_used, 0)
     
     def lunch_minutes_remaining(self):
-        return max(60 - self.lunch_minutes_used, 0)
+        return max(60 - self.lunch_minutes_used, 0)  # 60 minutes for lunch
 
-    def is_break_exceeded(self):
-        return self.break_minutes_used > 30
+    def is_break1_exceeded(self):
+        return self.break1_minutes_used > 15
+
+    def is_break2_exceeded(self):
+        return self.break2_minutes_used > 15
 
     def is_lunch_exceeded(self):
         return self.lunch_minutes_used > 60
 
-    def break_minutes_exceeded(self):
-        if self.is_break_exceeded():
-            return self.break_minutes_used - 30
+    def break1_minutes_exceeded(self):
+        if self.is_break1_exceeded():
+            return self.break1_minutes_used - 15
+        return 0
+
+    def break2_minutes_exceeded(self):
+        if self.is_break2_exceeded():
+            return self.break2_minutes_used - 15
         return 0
 
     def lunch_minutes_exceeded(self):
         if self.is_lunch_exceeded():
             return self.lunch_minutes_used - 60
         return 0
+        
+    def total_break_minutes_remaining(self):
+        return self.break1_minutes_remaining() + self.break2_minutes_remaining()
+        
+    def total_break_minutes_used(self):
+        return self.break1_minutes_used + self.break2_minutes_used
 
     def __str__(self):
         return f"{self.user.username}'s time allocation for {self.date}"
