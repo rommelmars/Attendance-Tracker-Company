@@ -13,6 +13,8 @@ from django.contrib.auth.models import User
 from collections import defaultdict
 from django.utils.timezone import localtime
 import pytz
+from django.core.management.base import BaseCommand
+from django.conf import settings
 
 # 👤 LOGIN
 def login_view(request):
@@ -219,6 +221,26 @@ def tracker_view(request):
             shift_start_datetime = datetime.combine(shift_date, shift_start_time)
             shift_start_datetime = shift_start_datetime.replace(tzinfo=pytz.timezone('Asia/Manila'))
             
+            # Check if we need to reset break/lunch allocations for a new shift
+            # A new shift starts after 7 AM, so if we're past 7 AM, we should reset for today
+            if current_time >= time(7, 0):
+                # Get today's allocation and reset it if it exists
+                today_allocation = DailyTimeAllocation.objects.filter(
+                    user=request.user,
+                    date=now.date()
+                ).first()
+                
+                if today_allocation:
+                    today_allocation.break1_minutes_used = 0
+                    today_allocation.break2_minutes_used = 0
+                    today_allocation.lunch_minutes_used = 0
+                    today_allocation.break1_start_time = None
+                    today_allocation.break2_start_time = None
+                    today_allocation.lunch_start_time = None
+                    today_allocation.save()
+                    messages.info(request, 'Break and lunch allocations have been reset for today\'s shift.')
+            
+            # Only check for lateness if clocking in after the shift start time
             if now > shift_start_datetime:
                 is_late = True
                 time_diff = now - shift_start_datetime
@@ -228,6 +250,12 @@ def tracker_view(request):
             note = None
             if is_late:
                 note = f"Late arrival: {late_minutes} minutes"
+            else:
+                # Add a note for early clock-ins if you want to track them
+                time_diff = shift_start_datetime - now
+                early_minutes = int(time_diff.total_seconds() // 60)
+                if early_minutes > 0:
+                    note = f"Early arrival: {early_minutes} minutes before shift"
             
             log = AttendanceLog(user=request.user, action='clock_in', note=note)
             log.save()
@@ -550,20 +578,56 @@ def admin_dashboard(request):
 # 📤 EXPORT USER CSV
 @login_required
 def export_csv(request):
-    response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = f'attachment; filename="{request.user.username}_attendance.csv"'
-
-    writer = csv.writer(response)
-    writer.writerow([
-        'Date', 'Action', 'Time', 
-        'Break 1 Minutes Remaining', 'Break 1 Minutes Exceeded',
-        'Break 2 Minutes Remaining', 'Break 2 Minutes Exceeded',
-        'Lunch Minutes Remaining', 'Lunch Minutes Exceeded', 
-        'Note'
-    ])
-
-    # Get all unique dates with logs
+    # Import the necessary libraries
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from io import BytesIO
+    
+    # Create a new workbook and sheets
+    wb = openpyxl.Workbook()
+    
+    # Create the sheets we need with valid names
+    clock_sheet = wb.active
+    clock_sheet.title = "Clock In-Out"  # Changed from "Clock In/Out" to "Clock In-Out"
+    break_sheet = wb.create_sheet(title="Breaks")
+    lunch_sheet = wb.create_sheet(title="Lunch")
+    
+    # Set up headers with formatting
+    headers = {
+        "Clock In-Out": ["Date", "Action", "Time", "Note", "Late (minutes)"],  # Updated key name
+        "Breaks": ["Date", "Action", "Time", "Break Type", "Duration (minutes)", "Remaining Time", "Exceeded Time", "Note"],
+        "Lunch": ["Date", "Action", "Time", "Duration (minutes)", "Remaining Time", "Exceeded Time", "Note"]
+    }
+    
+    header_font = Font(bold=True)
+    header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+    
+    # Set up headers for each sheet
+    for col_num, header in enumerate(headers["Clock In-Out"], 1):
+        cell = clock_sheet.cell(row=1, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+    
+    for col_num, header in enumerate(headers["Breaks"], 1):
+        cell = break_sheet.cell(row=1, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+    
+    for col_num, header in enumerate(headers["Lunch"], 1):
+        cell = lunch_sheet.cell(row=1, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+    
+    # Get all logs for the user
     logs = AttendanceLog.objects.filter(user=request.user).order_by('timestamp')
+    
+    # Track row numbers for each sheet
+    clock_row = 2
+    break_row = 2
+    lunch_row = 2
     
     # Group logs by date to track remaining time
     dates = set(log.timestamp.date() for log in logs)
@@ -598,18 +662,97 @@ def export_csv(request):
             # Format the time in local timezone with 12-hour AM/PM format
             local_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
             
-            writer.writerow([
-                log_date, 
-                log.action, 
-                local_time,
-                break1_remaining if log.action in ['start_break1', 'end_break1'] else '',
-                break1_exceeded if log.action == 'end_break1' and break1_exceeded > 0 else '',
-                break2_remaining if log.action in ['start_break2', 'end_break2'] else '',
-                break2_exceeded if log.action == 'end_break2' and break2_exceeded > 0 else '',
-                lunch_remaining if log.action in ['start_lunch', 'end_lunch'] else '',
-                lunch_exceeded if log.action == 'end_lunch' and lunch_exceeded > 0 else '',
-                log.note or ''
-            ])
+            # Process based on action type
+            if log.action in ['clock_in', 'clock_out']:
+                # Add to Clock In-Out sheet
+                clock_sheet.cell(row=clock_row, column=1).value = log_date.strftime('%Y-%m-%d')
+                clock_sheet.cell(row=clock_row, column=2).value = log.action.replace('_', ' ').title()
+                clock_sheet.cell(row=clock_row, column=3).value = local_time
+                clock_sheet.cell(row=clock_row, column=4).value = log.note or ''
+                
+                # Extract late minutes from note if it's a clock_in
+                if log.action == 'clock_in' and log.note and 'Late arrival:' in log.note:
+                    try:
+                        minutes_late = int(log.note.split('Late arrival:')[1].split('minutes')[0].strip())
+                        clock_sheet.cell(row=clock_row, column=5).value = minutes_late
+                    except (ValueError, IndexError):
+                        pass
+                    
+                clock_row += 1
+                
+            elif log.action in ['start_break1', 'end_break1', 'start_break2', 'end_break2']:
+                # Add to Breaks sheet
+                break_sheet.cell(row=break_row, column=1).value = log_date.strftime('%Y-%m-%d')
+                break_sheet.cell(row=break_row, column=2).value = 'Start' if 'start' in log.action else 'End'
+                break_sheet.cell(row=break_row, column=3).value = local_time
+                break_sheet.cell(row=break_row, column=4).value = 'Break 1' if 'break1' in log.action else 'Break 2'
+                
+                # Add duration if it's an end break action
+                if 'end' in log.action and log.note and 'duration:' in log.note.lower():
+                    try:
+                        duration = int(log.note.split('duration:')[1].split('minutes')[0].strip())
+                        break_sheet.cell(row=break_row, column=5).value = duration
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Add remaining time
+                if 'break1' in log.action:
+                    break_sheet.cell(row=break_row, column=6).value = break1_remaining
+                    if 'end' in log.action and break1_exceeded > 0:
+                        break_sheet.cell(row=break_row, column=7).value = break1_exceeded
+                else:  # break2
+                    break_sheet.cell(row=break_row, column=6).value = break2_remaining
+                    if 'end' in log.action and break2_exceeded > 0:
+                        break_sheet.cell(row=break_row, column=7).value = break2_exceeded
+                
+                break_sheet.cell(row=break_row, column=8).value = log.note or ''
+                break_row += 1
+                
+            elif log.action in ['start_lunch', 'end_lunch']:
+                # Add to Lunch sheet
+                lunch_sheet.cell(row=lunch_row, column=1).value = log_date.strftime('%Y-%m-%d')
+                lunch_sheet.cell(row=lunch_row, column=2).value = 'Start' if 'start' in log.action else 'End'
+                lunch_sheet.cell(row=lunch_row, column=3).value = local_time
+                
+                # Add duration if it's an end lunch action
+                if log.action == 'end_lunch' and log.note and 'duration:' in log.note.lower():
+                    try:
+                        duration = int(log.note.split('duration:')[1].split('minutes')[0].strip())
+                        lunch_sheet.cell(row=lunch_row, column=4).value = duration
+                    except (ValueError, IndexError):
+                        pass
+                
+                lunch_sheet.cell(row=lunch_row, column=5).value = lunch_remaining
+                if log.action == 'end_lunch' and lunch_exceeded > 0:
+                    lunch_sheet.cell(row=lunch_row, column=6).value = lunch_exceeded
+                
+                lunch_sheet.cell(row=lunch_row, column=7).value = log.note or ''
+                lunch_row += 1
+    
+    # Auto-adjust column widths
+    for sheet in [clock_sheet, break_sheet, lunch_sheet]:
+        for column in sheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            
+            for cell in column:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            
+            adjusted_width = max_length + 2
+            sheet.column_dimensions[column_letter].width = adjusted_width
+    
+    # Save to BytesIO object
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    # Return response
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{request.user.username}_attendance.xlsx"'
     
     return response
 
@@ -641,3 +784,140 @@ def admin_export_csv(request):
         ])
     
     return response
+
+# Automatic clock out function
+def auto_clock_out_at_shift_end():
+    """
+    Automatically clock out users at 7 AM if they're still clocked in,
+    end any ongoing breaks or lunch, and reset break/lunch allocations for the new day
+    """
+    now = timezone.now()
+    manila_tz = pytz.timezone('Asia/Manila')
+    local_now = now.astimezone(manila_tz)
+    current_time = local_now.time()
+    current_date = local_now.date()
+    
+    # Only run this between 7:00-7:10 AM
+    if current_time >= time(7, 0) and current_time < time(7, 10):
+        # Get all users in the system
+        all_users = User.objects.filter(is_active=True)
+        
+        # 1. First, let's end any ongoing breaks or lunch for ALL users
+        for user in all_users:
+            today_allocation = DailyTimeAllocation.objects.filter(
+                user=user,
+                date=current_date
+            ).first()
+            
+            if today_allocation:
+                # Check and end Break 1 if active
+                if today_allocation.break1_start_time:
+                    break_duration = now - today_allocation.break1_start_time
+                    minutes_used = int(break_duration.total_seconds() // 60)
+                    today_allocation.break1_minutes_used += minutes_used
+                    
+                    # Log break end
+                    break_log = AttendanceLog(
+                        user=user,
+                        action='end_break1',
+                        note=f'Auto-ended break at shift end. Duration: {minutes_used} minutes'
+                    )
+                    break_log.save()
+                    today_allocation.break1_start_time = None
+                
+                # Check and end Break 2 if active
+                if today_allocation.break2_start_time:
+                    break_duration = now - today_allocation.break2_start_time
+                    minutes_used = int(break_duration.total_seconds() // 60)
+                    today_allocation.break2_minutes_used += minutes_used
+                    
+                    # Log break end
+                    break_log = AttendanceLog(
+                        user=user,
+                        action='end_break2',
+                        note=f'Auto-ended break at shift end. Duration: {minutes_used} minutes'
+                    )
+                    break_log.save()
+                    today_allocation.break2_start_time = None
+                
+                # Check and end Lunch if active
+                if today_allocation.lunch_start_time:
+                    lunch_duration = now - today_allocation.lunch_start_time
+                    minutes_used = int(lunch_duration.total_seconds() // 60)
+                    today_allocation.lunch_minutes_used += minutes_used
+                    
+                    # Log lunch end
+                    lunch_log = AttendanceLog(
+                        user=user,
+                        action='end_lunch',
+                        note=f'Auto-ended lunch at shift end. Duration: {minutes_used} minutes'
+                    )
+                    lunch_log.save()
+                    today_allocation.lunch_start_time = None
+                
+                # Save the updated allocation
+                today_allocation.save()
+
+        # 2. Now, find users who are still clocked in and clock them out
+        yesterday = current_date - timedelta(days=1)
+        
+        # Check for yesterday's clock-ins
+        yesterday_clock_ins = AttendanceLog.objects.filter(
+            action='clock_in',
+            timestamp__date=yesterday
+        ).select_related('user')
+        
+        # Check for today's early morning clock-ins (before 7 AM)
+        today_early_clock_ins = AttendanceLog.objects.filter(
+            action='clock_in',
+            timestamp__date=current_date,
+            timestamp__time__lt=time(7, 0)
+        ).select_related('user')
+        
+        # For each potential clocked-in user, check if they've clocked out
+        potential_users = set()
+        for log in list(yesterday_clock_ins) + list(today_early_clock_ins):
+            potential_users.add(log.user)
+        
+        for user in potential_users:
+            # Check if the user has a clock-out entry after their last clock-in
+            last_clock_in = AttendanceLog.objects.filter(
+                user=user,
+                action='clock_in',
+                timestamp__date__gte=yesterday,
+                timestamp__date__lte=current_date
+            ).order_by('-timestamp').first()
+            
+            if last_clock_in:
+                last_clock_out = AttendanceLog.objects.filter(
+                    user=user,
+                    action='clock_out',
+                    timestamp__gt=last_clock_in.timestamp
+                ).first()
+                
+                if not last_clock_out:
+                    # Create clock-out log - they're still clocked in
+                    log = AttendanceLog(
+                        user=user, 
+                        action='clock_out', 
+                        note='Automatic clock-out at shift end (7 AM)'
+                    )
+                    log.save()
+        
+        # 3. Reset all break/lunch allocations for the new day
+        # Get all allocations for today
+        today_allocations = DailyTimeAllocation.objects.filter(date=current_date)
+        
+        for allocation in today_allocations:
+            # Reset to fresh allocation values for the new day
+            allocation.break1_minutes_used = 0
+            allocation.break2_minutes_used = 0
+            allocation.lunch_minutes_used = 0
+            allocation.break1_start_time = None
+            allocation.break2_start_time = None
+            allocation.lunch_start_time = None
+            allocation.save()
+            
+        return f"Auto clock-out process completed. Ended breaks, clocked out remaining users, and reset allocations."
+    else:
+        return "Auto clock-out process skipped - not between 7:00-7:10 AM."
