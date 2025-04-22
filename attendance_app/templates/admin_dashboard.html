@@ -28,7 +28,7 @@
                 </button>
                 <div class="dropdown-content">
                     <a href="{% url 'admin_export_csv' %}" class="dropdown-item">
-                        <i class="fas fa-file-csv"></i> Export All Data
+                        <i class="fas fa-file-excel"></i> Export All Users Data
                     </a>
                     <a href="/admin/" class="dropdown-item">
                         <i class="fas fa-cog"></i> Django Admin
@@ -125,31 +125,39 @@
                             {% endif %}
                         </h2>
                         
-                        <!-- Compact date filter button -->
-                        <div class="compact-filter">
-                            <button type="button" class="btn btn-outline-primary filter-toggle-btn" id="filter-toggle">
-                                <i class="fas fa-filter"></i> Filter
-                                {% if selected_date %}<span class="filter-badge">{{ selected_date|date:'Y-m-d' }}</span>{% endif %}
-                            </button>
+                        <div class="header-actions">
+                            <!-- Export button for currently viewed user/data -->
+                            <a href="{% url 'admin_export_csv' %}{% if selected_user %}?user={{ selected_user }}{% endif %}{% if selected_date %}&date={{ selected_date|date:'Y-m-d' }}{% endif %}" 
+                               class="btn btn-success export-btn">
+                                <i class="fas fa-file-excel"></i> Export
+                            </a>
                             
-                            <!-- Hidden filter form that shows on click -->
-                            <div class="floating-filter" id="floating-filter">
-                                <form method="get" class="filter-form">
-                                    {% if selected_user %}
-                                        <input type="hidden" name="user" value="{{ selected_user }}">
-                                    {% endif %}
-                                    
-                                    <div class="filter-group">
-                                        <label for="date-filter">Filter by Date:</label>
-                                        <input type="text" id="date-filter" name="date" class="filter-input date-picker" 
-                                               placeholder="Select a date" value="{{ selected_date|date:'Y-m-d' }}">
-                                    </div>
-                                    
-                                    <div class="filter-actions">
-                                        <button type="submit" class="btn btn-primary filter-btn">Apply</button>
-                                        <a href="{% if selected_user %}{% url 'admin_dashboard' %}?user={{ selected_user }}{% else %}{% url 'admin_dashboard' %}{% endif %}" class="btn btn-outline-secondary reset-btn">Reset</a>
-                                    </div>
-                                </form>
+                            <!-- Compact date filter button -->
+                            <div class="compact-filter">
+                                <button type="button" class="btn btn-outline-primary filter-toggle-btn" id="filter-toggle">
+                                    <i class="fas fa-filter"></i> Filter
+                                    {% if selected_date %}<span class="filter-badge">{{ selected_date|date:'Y-m-d' }}</span>{% endif %}
+                                </button>
+                                
+                                <!-- Hidden filter form that shows on click -->
+                                <div class="floating-filter" id="floating-filter">
+                                    <form method="get" class="filter-form">
+                                        {% if selected_user %}
+                                            <input type="hidden" name="user" value="{{ selected_user }}">
+                                        {% endif %}
+                                        
+                                        <div class="filter-group">
+                                            <label for="date-filter">Filter by Date:</label>
+                                            <input type="text" id="date-filter" name="date" class="filter-input date-picker" 
+                                                   placeholder="Select a date" value="{{ selected_date|date:'Y-m-d' }}">
+                                        </div>
+                                        
+                                        <div class="filter-actions">
+                                            <button type="submit" class="btn btn-primary filter-btn">Apply</button>
+                                            <a href="{% if selected_user %}{% url 'admin_dashboard' %}?user={{ selected_user }}{% else %}{% url 'admin_dashboard' %}{% endif %}" class="btn btn-outline-secondary reset-btn">Reset</a>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
                         </div>
                     </div>
