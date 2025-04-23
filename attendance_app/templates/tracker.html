@@ -284,6 +284,47 @@
         <div id="calendar-container"></div>
     </div>
 </div>
+
+<!-- Clock Out Reason Modal -->
+<div id="clockOutModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button clock-out-close">&times;</span>
+        <h2 class="modal-title">Reason for Clocking Out</h2>
+        <form method="post" id="clockOutForm">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clock_out">
+            
+            <div class="reason-options">
+                <div class="reason-option">
+                    <input type="radio" id="reason-shift-end" name="clock_out_reason" value="Shift End" checked>
+                    <label for="reason-shift-end">Shift End</label>
+                </div>
+                <div class="reason-option">
+                    <input type="radio" id="reason-sleeping-spiff" name="clock_out_reason" value="Sleeping Spiff">
+                    <label for="reason-sleeping-spiff">Sleeping Spiff</label>
+                </div>
+                <div class="reason-option">
+                    <input type="radio" id="reason-emergency" name="clock_out_reason" value="Emergency Reasons">
+                    <label for="reason-emergency">Emergency Reasons</label>
+                </div>
+                <div class="reason-option">
+                    <input type="radio" id="reason-others" name="clock_out_reason" value="Others">
+                    <label for="reason-others">Others</label>
+                </div>
+                
+                <div id="other-reason-container" style="display: none; margin-top: 10px;">
+                    <label for="other-reason">Please specify:</label>
+                    <textarea id="other-reason" name="other_reason" class="form-control" rows="2"></textarea>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-danger">Confirm Clock Out</button>
+                <button type="button" class="btn btn-secondary clock-out-cancel">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -294,12 +335,99 @@
         const clockOutBtn = document.querySelector('button[value="clock_out"]');
         if (clockOutBtn) {
             clockOutBtn.addEventListener('click', function(e) {
-                if (!confirm('Are you sure you want to clock out?')) {
-                    e.preventDefault();
-                }
+                e.preventDefault();
+                document.getElementById("clockOutModal").style.display = "block";
             });
         }
-        
+
+        // Clock Out Modal Close Button
+        const clockOutModal = document.getElementById("clockOutModal");
+        const clockOutCloseBtn = document.querySelector(".clock-out-close");
+        const clockOutCancelBtn = document.querySelector(".clock-out-cancel");
+
+        if (clockOutCloseBtn) {
+            clockOutCloseBtn.onclick = function() {
+                clockOutModal.style.display = "none";
+            }
+        }
+
+        if (clockOutCancelBtn) {
+            clockOutCancelBtn.onclick = function() {
+                clockOutModal.style.display = "none";
+            }
+        }
+
+        // Handle "Others" option to show text area
+        const othersRadio = document.getElementById("reason-others");
+        const otherReasonContainer = document.getElementById("other-reason-container");
+
+        if (othersRadio) {
+            document.querySelectorAll('input[name="clock_out_reason"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    if (othersRadio.checked) {
+                        otherReasonContainer.style.display = "block";
+                    } else {
+                        otherReasonContainer.style.display = "none";
+                    }
+                });
+            });
+        }
+
+        // Handle form submission
+        const clockOutForm = document.getElementById("clockOutForm");
+        if (clockOutForm) {
+            clockOutForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                // Get the selected reason
+                const selectedReason = document.querySelector('input[name="clock_out_reason"]:checked').value;
+                let finalReason = selectedReason;
+                
+                // If "Others" is selected, get the text from the textarea
+                if (selectedReason === "Others") {
+                    const otherReasonText = document.getElementById("other-reason").value.trim();
+                    if (!otherReasonText) {
+                        alert("Please specify the other reason for clocking out.");
+                        return;
+                    }
+                    finalReason = `Others: ${otherReasonText}`;
+                }
+                
+                // Create a hidden input for the reason and add it to the form
+                const reasonInput = document.createElement('input');
+                reasonInput.type = 'hidden';
+                reasonInput.name = 'clock_out_note';
+                reasonInput.value = finalReason;
+                
+                // Create a new form to submit
+                const form = document.createElement('form');
+                form.method = 'post';
+                form.style.display = 'none';
+                
+                // Add CSRF token
+                const csrfToken = document.querySelector('input[name="csrfmiddlewaretoken"]').value;
+                const csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrfmiddlewaretoken';
+                csrfInput.value = csrfToken;
+                
+                // Add action value
+                const actionInput = document.createElement('input');
+                actionInput.type = 'hidden';
+                actionInput.name = 'action';
+                actionInput.value = 'clock_out';
+                
+                // Append all inputs to the form
+                form.appendChild(csrfInput);
+                form.appendChild(actionInput);
+                form.appendChild(reasonInput);
+                
+                // Append form to body and submit
+                document.body.appendChild(form);
+                form.submit();
+            });
+        }
+
         // Initialize date picker
         const datePicker = flatpickr("#datePicker", {
             dateFormat: "Y-m-d",

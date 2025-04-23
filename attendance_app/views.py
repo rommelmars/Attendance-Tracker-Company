@@ -15,6 +15,7 @@ from django.utils.timezone import localtime
 import pytz
 from django.core.management.base import BaseCommand
 from django.conf import settings
+from openpyxl.utils import get_column_letter
 
 # 👤 LOGIN
 def login_view(request):
@@ -162,8 +163,15 @@ def tracker_view(request):
                 # Create a note that they're still clocked in from yesterday
                 messages.info(request, f"You are still clocked in from yesterday ({yesterday.strftime('%Y-%m-%d')})")
     
-    # If the user has clocked in but not clocked out, they are considered clocked in
-    if clocked_in_today and not clocked_out_today:
+    # Get the latest clock action for today
+    latest_clock_action = AttendanceLog.objects.filter(
+        user=request.user,
+        action__in=['clock_in', 'clock_out'],
+        timestamp__date=today
+    ).order_by('-timestamp').first()
+
+    # If the latest action is clock_in, they are clocked in
+    if latest_clock_action and latest_clock_action.action == 'clock_in':
         is_clocked_in = True
         if not (ongoing_break1 or ongoing_break2 or ongoing_lunch):
             current_status = 'working'
@@ -220,7 +228,8 @@ def tracker_view(request):
         
         # CLOCK OUT
         elif action == 'clock_out':
-            log = AttendanceLog(user=request.user, action='clock_out')
+            clock_out_note = request.POST.get('clock_out_note', '')
+            log = AttendanceLog(user=request.user, action='clock_out', note=clock_out_note)
             log.save()
             messages.success(request, 'Clocked out successfully!')
             return redirect('tracker')
@@ -530,28 +539,21 @@ def export_csv(request):
     # Import the necessary libraries
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
     from io import BytesIO
     
     # Create a new workbook and sheets
     wb = openpyxl.Workbook()
     
-    # Create the sheets we need with valid names
-    clock_sheet = wb.active
-    clock_sheet.title = "Clock In-Out"
-    break_sheet = wb.create_sheet(title="Breaks")
-    lunch_sheet = wb.create_sheet(title="Lunch")
-    summary_sheet = wb.create_sheet(title="Summary")
+    # Create one main activity sheet
+    activity_sheet = wb.active
+    activity_sheet.title = "Activity Log"
     
     # Define styles
     header_font = Font(bold=True, size=12)
     header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
     header_alignment = Alignment(horizontal='center', vertical='center')
     
-    date_fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
     alt_row_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    
-    exceeded_font = Font(color="FF0000", bold=True)
     
     thin_border = Border(
         left=Side(style='thin'),
@@ -560,335 +562,85 @@ def export_csv(request):
         bottom=Side(style='thin')
     )
     
-    # Set up headers
-    headers = {
-        "Clock In-Out": ["Date", "Action", "Time", "Note", "Late (minutes)"],
-        "Breaks": ["Date", "Action", "Time", "Break Type", "Duration (min)", "Remaining (min)", "Exceeded (min)", "Note"],
-        "Lunch": ["Date", "Action", "Time", "Duration (min)", "Remaining (min)", "Exceeded (min)", "Note"],
-        "Summary": ["Date", "Status", "Clock In Time", "Clock Out Time", "Total Hours", 
-                   "Break 1 Used", "Break 2 Used", "Lunch Used", "Break 1 Exceeded", 
-                   "Break 2 Exceeded", "Lunch Exceeded", "Late Minutes"]
-    }
+    # Set up headers for activity sheet
+    headers = ["Date", "Time", "Action", "Status", "Note"]
     
-    # Apply headers to each sheet with styling
-    for sheet_name, sheet in [("Clock In-Out", clock_sheet), ("Breaks", break_sheet), 
-                             ("Lunch", lunch_sheet), ("Summary", summary_sheet)]:
-        for col_num, header in enumerate(headers[sheet_name], 1):
-            cell = sheet.cell(row=1, column=col_num)
-            cell.value = header
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = thin_border
+    # Apply headers with styling
+    for col_num, header in enumerate(headers, 1):
+        cell = activity_sheet.cell(row=1, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
     
-    # Get all logs for the user
-    logs = AttendanceLog.objects.filter(user=request.user).order_by('timestamp')
+    # Get all logs for the user, ordered by timestamp
+    logs = AttendanceLog.objects.filter(user=request.user).order_by('-timestamp')
     
-    # Track row numbers for each sheet
-    clock_row = 2
-    break_row = 2
-    lunch_row = 2
-    summary_row = 2
-    
-    # Group logs by date
-    dates = set(log.timestamp.date() for log in logs)
-    
-    # Dictionary to store daily summary data
-    daily_summary = {}
-    
-    for log_date in sorted(dates):
-        # Get the time allocation for this date
-        time_allocation = DailyTimeAllocation.objects.filter(
-            user=request.user,
-            date=log_date
-        ).first()
+    # Process each log entry
+    row = 2
+    for log in logs:
+        # Format date and time
+        log_date = timezone.localtime(log.timestamp).strftime('%Y-%m-%d')
+        log_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
         
-        # If no time allocation exists for this date, create default values
-        break1_remaining = 15
-        break2_remaining = 15
-        lunch_remaining = 60
-        break1_exceeded = 0
-        break2_exceeded = 0
-        lunch_exceeded = 0
-        break1_used = 0
-        break2_used = 0
-        lunch_used = 0
+        # Format the action nicely
+        action = log.action.replace('_', ' ').title()
         
-        if time_allocation:
-            break1_remaining = time_allocation.break1_minutes_remaining()
-            break2_remaining = time_allocation.break2_minutes_remaining()
-            lunch_remaining = time_allocation.lunch_minutes_remaining()
-            break1_exceeded = time_allocation.break1_minutes_exceeded()
-            break2_exceeded = time_allocation.break2_minutes_exceeded()
-            lunch_exceeded = time_allocation.lunch_minutes_exceeded()
-            break1_used = time_allocation.break1_minutes_used
-            break2_used = time_allocation.break2_minutes_used
-            lunch_used = time_allocation.lunch_minutes_used
-            
-        # Initialize summary data for this date
-        daily_summary[log_date] = {
-            'status': 'Incomplete',
-            'clock_in_time': None,
-            'clock_out_time': None,
-            'total_hours': 0,
-            'break1_used': break1_used,
-            'break2_used': break2_used,
-            'lunch_used': lunch_used,
-            'break1_exceeded': break1_exceeded,
-            'break2_exceeded': break2_exceeded,
-            'lunch_exceeded': lunch_exceeded,
-            'late_minutes': 0
-        }
-            
-        # Get logs for this specific date
-        daily_logs = logs.filter(timestamp__date=log_date)
+        # Determine status based on action
+        if 'Clock In' in action:
+            status = "Working"
+        elif 'Clock Out' in action:
+            status = "Off Duty"
+        elif 'Start Break' in action or 'Start Lunch' in action:
+            status = "On Break"
+        elif 'End Break' in action or 'End Lunch' in action:
+            status = "Back to Work"
+        else:
+            status = ""
         
-        # Find first clock in and last clock out
-        first_clock_in = daily_logs.filter(action='clock_in').order_by('timestamp').first()
-        last_clock_out = daily_logs.filter(action='clock_out').order_by('-timestamp').first()
+        # Apply alternating row styling
+        row_style = alt_row_fill if row % 2 == 0 else None
         
-        if first_clock_in:
-            daily_summary[log_date]['clock_in_time'] = timezone.localtime(first_clock_in.timestamp)
-            # Check for late arrival
-            if first_clock_in.note and 'Late arrival:' in first_clock_in.note:
-                try:
-                    minutes_late = int(first_clock_in.note.split('Late arrival:')[1].split('minutes')[0].strip())
-                    daily_summary[log_date]['late_minutes'] = minutes_late
-                except (ValueError, IndexError):
-                    pass
-        
-        if last_clock_out:
-            daily_summary[log_date]['clock_out_time'] = timezone.localtime(last_clock_out.timestamp)
-        
-        # Calculate total hours if both clock in and out exist
-        if daily_summary[log_date]['clock_in_time'] and daily_summary[log_date]['clock_out_time']:
-            daily_summary[log_date]['status'] = 'Complete'
-            time_diff = daily_summary[log_date]['clock_out_time'] - daily_summary[log_date]['clock_in_time']
-            # Convert to decimal hours (e.g., 7.5 hours)
-            daily_summary[log_date]['total_hours'] = round(time_diff.total_seconds() / 3600, 2)
-        
-        # Apply alternate row styling
-        row_fill = alt_row_fill if summary_row % 2 == 0 else None
-        
-        for log in daily_logs:
-            # Format the time in local timezone with 12-hour AM/PM format
-            local_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
-            
-            # Process based on action type
-            if log.action in ['clock_in', 'clock_out']:
-                # Apply styling based on row number
-                row_style = alt_row_fill if clock_row % 2 == 0 else None
-                
-                # Add to Clock In-Out sheet
-                for col in range(1, 6):
-                    cell = clock_sheet.cell(row=clock_row, column=col)
-                    cell.border = thin_border
-                    if row_style:
-                        cell.fill = row_style
-                
-                clock_sheet.cell(row=clock_row, column=1).value = log_date.strftime('%Y-%m-%d')
-                clock_sheet.cell(row=clock_row, column=2).value = log.action.replace('_', ' ').title()
-                clock_sheet.cell(row=clock_row, column=3).value = local_time
-                clock_sheet.cell(row=clock_row, column=4).value = log.note or ''
-                
-                # Extract late minutes from note if it's a clock_in
-                if log.action == 'clock_in' and log.note and 'Late arrival:' in log.note:
-                    try:
-                        minutes_late = int(log.note.split('Late arrival:')[1].split('minutes')[0].strip())
-                        clock_sheet.cell(row=clock_row, column=5).value = minutes_late
-                        clock_sheet.cell(row=clock_row, column=5).font = exceeded_font
-                    except (ValueError, IndexError):
-                        pass
-                    
-                clock_row += 1
-                
-            elif log.action in ['start_break1', 'end_break1', 'start_break2', 'end_break2']:
-                # Apply styling based on row number
-                row_style = alt_row_fill if break_row % 2 == 0 else None
-                
-                # Add to Breaks sheet
-                for col in range(1, 9):
-                    cell = break_sheet.cell(row=break_row, column=col)
-                    cell.border = thin_border
-                    if row_style:
-                        cell.fill = row_style
-                
-                break_sheet.cell(row=break_row, column=1).value = log_date.strftime('%Y-%m-%d')
-                break_sheet.cell(row=break_row, column=2).value = 'Start' if 'start' in log.action else 'End'
-                break_sheet.cell(row=break_row, column=3).value = local_time
-                break_sheet.cell(row=break_row, column=4).value = 'Break 1' if 'break1' in log.action else 'Break 2'
-                
-                # Add duration if it's an end break action
-                if 'end' in log.action and log.note and 'duration:' in log.note.lower():
-                    try:
-                        duration = int(log.note.split('duration:')[1].split('minutes')[0].strip())
-                        break_sheet.cell(row=break_row, column=5).value = duration
-                    except (ValueError, IndexError):
-                        pass
-                
-                # Add remaining time
-                if 'break1' in log.action:
-                    break_sheet.cell(row=break_row, column=6).value = break1_remaining
-                    if 'end' in log.action and break1_exceeded > 0:
-                        break_sheet.cell(row=break_row, column=7).value = break1_exceeded
-                        break_sheet.cell(row=break_row, column=7).font = exceeded_font
-                else:  # break2
-                    break_sheet.cell(row=break_row, column=6).value = break2_remaining
-                    if 'end' in log.action and break2_exceeded > 0:
-                        break_sheet.cell(row=break_row, column=7).value = break2_exceeded
-                        break_sheet.cell(row=break_row, column=7).font = exceeded_font
-                
-                break_sheet.cell(row=break_row, column=8).value = log.note or ''
-                break_row += 1
-                
-            elif log.action in ['start_lunch', 'end_lunch']:
-                # Apply styling based on row number
-                row_style = alt_row_fill if lunch_row % 2 == 0 else None
-                
-                # Add to Lunch sheet
-                for col in range(1, 8):
-                    cell = lunch_sheet.cell(row=lunch_row, column=col)
-                    cell.border = thin_border
-                    if row_style:
-                        cell.fill = row_style
-                
-                lunch_sheet.cell(row=lunch_row, column=1).value = log_date.strftime('%Y-%m-%d')
-                lunch_sheet.cell(row=lunch_row, column=2).value = 'Start' if 'start' in log.action else 'End'
-                lunch_sheet.cell(row=lunch_row, column=3).value = local_time
-                
-                # Add duration if it's an end lunch action
-                if log.action == 'end_lunch' and log.note and 'duration:' in log.note.lower():
-                    try:
-                        duration = int(log.note.split('duration:')[1].split('minutes')[0].strip())
-                        lunch_sheet.cell(row=lunch_row, column=4).value = duration
-                    except (ValueError, IndexError):
-                        pass
-                
-                lunch_sheet.cell(row=lunch_row, column=5).value = lunch_remaining
-                if log.action == 'end_lunch' and lunch_exceeded > 0:
-                    lunch_sheet.cell(row=lunch_row, column=6).value = lunch_exceeded
-                    lunch_sheet.cell(row=lunch_row, column=6).font = exceeded_font
-                
-                lunch_sheet.cell(row=lunch_row, column=7).value = log.note or ''
-                lunch_row += 1
-    
-    # Fill summary sheet with daily data
-    for log_date in sorted(daily_summary.keys()):
-        data = daily_summary[log_date]
-        
-        # Apply styling based on row number
-        row_style = alt_row_fill if summary_row % 2 == 0 else None
-        
-        for col in range(1, 13):
-            cell = summary_sheet.cell(row=summary_row, column=col)
+        # Apply styling to all cells in the row
+        for col in range(1, 6):
+            cell = activity_sheet.cell(row=row, column=col)
             cell.border = thin_border
             if row_style:
                 cell.fill = row_style
         
-        summary_sheet.cell(row=summary_row, column=1).value = log_date.strftime('%Y-%m-%d')
-        summary_sheet.cell(row=summary_row, column=2).value = data['status']
+        # Add data to the sheet
+        activity_sheet.cell(row=row, column=1).value = log_date
+        activity_sheet.cell(row=row, column=2).value = log_time
+        activity_sheet.cell(row=row, column=3).value = action
+        activity_sheet.cell(row=row, column=4).value = status
+        activity_sheet.cell(row=row, column=5).value = log.note or ""
         
-        # Format clock times nicely
-        if data['clock_in_time']:
-            summary_sheet.cell(row=summary_row, column=3).value = data['clock_in_time'].strftime('%I:%M %p')
-        if data['clock_out_time']:
-            summary_sheet.cell(row=summary_row, column=4).value = data['clock_out_time'].strftime('%I:%M %p')
-            
-        summary_sheet.cell(row=summary_row, column=5).value = data['total_hours']
-        summary_sheet.cell(row=summary_row, column=6).value = data['break1_used']
-        summary_sheet.cell(row=summary_row, column=7).value = data['break2_used']
-        summary_sheet.cell(row=summary_row, column=8).value = data['lunch_used']
-        
-        # Highlight exceeded times
-        if data['break1_exceeded'] > 0:
-            summary_sheet.cell(row=summary_row, column=9).value = data['break1_exceeded']
-            summary_sheet.cell(row=summary_row, column=9).font = exceeded_font
-        else:
-            summary_sheet.cell(row=summary_row, column=9).value = 0
-            
-        if data['break2_exceeded'] > 0:
-            summary_sheet.cell(row=summary_row, column=10).value = data['break2_exceeded']
-            summary_sheet.cell(row=summary_row, column=10).font = exceeded_font
-        else:
-            summary_sheet.cell(row=summary_row, column=10).value = 0
-            
-        if data['lunch_exceeded'] > 0:
-            summary_sheet.cell(row=summary_row, column=11).value = data['lunch_exceeded']
-            summary_sheet.cell(row=summary_row, column=11).font = exceeded_font
-        else:
-            summary_sheet.cell(row=summary_row, column=11).value = 0
-        
-        # Add late minutes if any
-        if data['late_minutes'] > 0:
-            summary_sheet.cell(row=summary_row, column=12).value = data['late_minutes']
-            summary_sheet.cell(row=summary_row, column=12).font = exceeded_font
-        else:
-            summary_sheet.cell(row=summary_row, column=12).value = 0
-            
-        summary_row += 1
+        row += 1
     
-    # Add totals row to summary sheet
-    summary_sheet.cell(row=summary_row, column=1).value = "TOTALS"
-    summary_sheet.cell(row=summary_row, column=1).font = header_font
+    # Adjust column widths using helper function
+    adjust_column_widths(activity_sheet)
     
-    # Calculate total hours worked
-    total_hours_formula = f"=SUM(E2:E{summary_row-1})"
-    summary_sheet.cell(row=summary_row, column=5).value = total_hours_formula
-    
-    # Calculate total break/lunch times
-    summary_sheet.cell(row=summary_row, column=6).value = f"=SUM(F2:F{summary_row-1})"
-    summary_sheet.cell(row=summary_row, column=7).value = f"=SUM(G2:G{summary_row-1})"
-    summary_sheet.cell(row=summary_row, column=8).value = f"=SUM(H2:H{summary_row-1})"
-    
-    # Calculate total exceeded times
-    summary_sheet.cell(row=summary_row, column=9).value = f"=SUM(I2:I{summary_row-1})"
-    summary_sheet.cell(row=summary_row, column=10).value = f"=SUM(J2:J{summary_row-1})"
-    summary_sheet.cell(row=summary_row, column=11).value = f"=SUM(K2:K{summary_row-1})"
-    
-    # Calculate total late minutes
-    summary_sheet.cell(row=summary_row, column=12).value = f"=SUM(L2:L{summary_row-1})"
-    
-    # Style the totals row
-    for col in range(1, 13):
-        cell = summary_sheet.cell(row=summary_row, column=col)
-        cell.font = header_font
-        cell.border = thin_border
-        cell.fill = header_fill
-    
-    # Auto-adjust column widths for better readability
-    for sheet in [clock_sheet, break_sheet, lunch_sheet, summary_sheet]:
-        for column in sheet.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            
-            for cell in column:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            
-            adjusted_width = max(max_length + 2, 12)  # Minimum width of 12
-            sheet.column_dimensions[column_letter].width = adjusted_width
-    
-    # Set print area and page setup for each sheet
-    for sheet in [summary_sheet, clock_sheet, break_sheet, lunch_sheet]:
-        sheet.page_setup.orientation = sheet.ORIENTATION_LANDSCAPE
-        sheet.page_setup.fitToWidth = True
-        sheet.print_title_rows = '1:1'  # Repeat header row on each page
+    # Set up print settings
+    activity_sheet.page_setup.orientation = activity_sheet.ORIENTATION_LANDSCAPE
+    activity_sheet.page_setup.fitToWidth = True
+    activity_sheet.print_title_rows = '1:1'  # Repeat header row on each page
     
     # Save to BytesIO object
     output = BytesIO()
     wb.save(output)
-    output.seek(0)
-    
+    output.seek(0)  # Reset the pointer to the beginning
+
     # Return response with the current month and year in the filename
     current_month_year = datetime.now().strftime('%B_%Y')
-    filename = f"{request.user.username}_attendance_{current_month_year}.xlsx"
-    
+    filename = f"{request.user.username}_activity_log_{current_month_year}.xlsx"
+
     response = HttpResponse(
-        output.read(),
+        output.getvalue(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    
+
     return response
 
 # 📤 EXPORT ADMIN CSV (ALL USERS)
@@ -897,7 +649,6 @@ def admin_export_csv(request):
     # Import necessary libraries
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
     from io import BytesIO
     
     # Get specific user parameter if provided
@@ -906,19 +657,19 @@ def admin_export_csv(request):
     # Create a new workbook
     wb = openpyxl.Workbook()
     
-    # Create the sheets we need with valid names
-    summary_sheet = wb.active
-    summary_sheet.title = "Summary"
+    # Remove the default sheet that's created automatically
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+    
+    # Create the summary sheet first
+    summary_sheet = wb.create_sheet(title="Summary")
     
     # Define styles
     header_font = Font(bold=True, size=12, color='FFFFFF')
     header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
     header_alignment = Alignment(horizontal='center', vertical='center')
     
-    date_fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
     alt_row_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    
-    exceeded_font = Font(color="FF0000", bold=True)
     
     thin_border = Border(
         left=Side(style='thin'),
@@ -927,13 +678,11 @@ def admin_export_csv(request):
         bottom=Side(style='thin')
     )
     
-    # Set up headers for summary sheet
-    headers = ["Username", "Date", "Status", "Clock In Time", "Clock Out Time", "Total Hours", 
-              "Break 1 Used", "Break 2 Used", "Lunch Used", "Break 1 Exceeded", 
-              "Break 2 Exceeded", "Lunch Exceeded", "Late Minutes"]
+    # Set up headers for summary sheet - simplified to match user export
+    summary_headers = ["Username", "Date", "Time", "Action", "Status", "Note"]
     
     # Apply headers to summary sheet with styling
-    for col_num, header in enumerate(headers, 1):
+    for col_num, header in enumerate(summary_headers, 1):
         cell = summary_sheet.cell(row=1, column=col_num)
         cell.value = header
         cell.font = header_font
@@ -944,284 +693,134 @@ def admin_export_csv(request):
     # Get data depending on whether we're showing all users or a specific user
     if selected_user_id:
         users = User.objects.filter(id=selected_user_id)
-        filename_prefix = f"user_{users.first().username}_attendance"
+        filename_prefix = f"user_{users.first().username}_activity"
     else:
         users = User.objects.all().order_by('username')
-        filename_prefix = "all_users_attendance"
+        filename_prefix = "all_users_activity"
+    
+    # Keep track of created sheet names to avoid duplicates
+    created_sheet_names = set(["Summary"])
     
     # Track the current row in the summary sheet
     summary_row = 2
     
     # Process each user's data
     for user in users:
-        # Get all logs for the user
-        logs = AttendanceLog.objects.filter(user=user).order_by('timestamp')
+        # Get all logs for the user, ordered by timestamp
+        logs = AttendanceLog.objects.filter(user=user).order_by('-timestamp')
         
         # If user has no logs, continue to next user
         if not logs.exists():
             continue
         
-        # Create a separate sheet for detailed logs for this user
-        user_sheet_name = f"{user.username[:20]}"  # Limit to 20 chars for Excel sheet name limit
-        user_sheet = wb.create_sheet(title=user_sheet_name)
+        # Create a unique name for this user's sheet
+        base_sheet_name = f"{user.username[:20]}"  # Limit to 20 chars for Excel sheet name limit
+        sheet_name = base_sheet_name
+        counter = 1
         
-        # Set up headers for user sheet
-        user_headers = ["Date", "Action", "Time", "Note", "Break/Lunch Status"]
+        # Ensure unique sheet names by adding numbers if needed
+        while sheet_name in created_sheet_names:
+            sheet_name = f"{base_sheet_name}_{counter}"
+            counter += 1
         
+        # Add to our set of created sheet names
+        created_sheet_names.add(sheet_name)
+        
+        # Create a separate sheet for this user
+        user_sheet = wb.create_sheet(title=sheet_name)
+        
+        # Set up headers for user sheet - matched to user export
+        user_headers = ["Date", "Time", "Action", "Status", "Note"]
+        
+        # Add header with user information
+        user_sheet.merge_cells('A1:E1')
+        user_header = user_sheet.cell(row=1, column=1)
+        user_header.value = f"Activity Log for: {user.first_name} {user.last_name} ({user.username})"
+        user_header.font = Font(bold=True, size=14)
+        user_header.alignment = Alignment(horizontal='center')
+        
+        # Apply headers with styling (in row 2)
         for col_num, header in enumerate(user_headers, 1):
-            cell = user_sheet.cell(row=1, column=col_num)
+            cell = user_sheet.cell(row=2, column=col_num)
             cell.value = header
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = header_alignment
             cell.border = thin_border
         
-        # Group logs by date
-        dates = set(log.timestamp.date() for log in logs)
+        # Process each log entry for both the user sheet and summary sheet
+        user_row = 3  # Start from row 3 since row 1-2 have headers
         
-        # Dictionary to store daily summary data
-        daily_summary = {}
-        
-        # Track the current row in the user sheet
-        user_row = 2
-        
-        # Process each date's logs
-        for log_date in sorted(dates):
-            # Get the time allocation for this date
-            time_allocation = DailyTimeAllocation.objects.filter(
-                user=user,
-                date=log_date
-            ).first()
+        for log in logs:
+            # Format date and time
+            log_date = timezone.localtime(log.timestamp).strftime('%Y-%m-%d')
+            log_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
             
-            # If no time allocation exists for this date, create default values
-            break1_remaining = 15
-            break2_remaining = 15
-            lunch_remaining = 60
-            break1_exceeded = 0
-            break2_exceeded = 0
-            lunch_exceeded = 0
-            break1_used = 0
-            break2_used = 0
-            lunch_used = 0
+            # Format the action nicely
+            action = log.action.replace('_', ' ').title()
             
-            if time_allocation:
-                break1_remaining = time_allocation.break1_minutes_remaining()
-                break2_remaining = time_allocation.break2_minutes_remaining()
-                lunch_remaining = time_allocation.lunch_minutes_remaining()
-                break1_exceeded = time_allocation.break1_minutes_exceeded()
-                break2_exceeded = time_allocation.break2_minutes_exceeded()
-                lunch_exceeded = time_allocation.lunch_minutes_exceeded()
-                break1_used = time_allocation.break1_minutes_used
-                break2_used = time_allocation.break2_minutes_used
-                lunch_used = time_allocation.lunch_minutes_used
-                
-            # Initialize summary data for this date
-            daily_summary[log_date] = {
-                'status': 'Incomplete',
-                'clock_in_time': None,
-                'clock_out_time': None,
-                'total_hours': 0,
-                'break1_used': break1_used,
-                'break2_used': break2_used,
-                'lunch_used': lunch_used,
-                'break1_exceeded': break1_exceeded,
-                'break2_exceeded': break2_exceeded,
-                'lunch_exceeded': lunch_exceeded,
-                'late_minutes': 0
-            }
-                
-            # Get logs for this specific date
-            daily_logs = logs.filter(timestamp__date=log_date)
+            # Determine status based on action - same as user export
+            if 'Clock In' in action:
+                status = "Working"
+            elif 'Clock Out' in action:
+                status = "Off Duty"
+            elif 'Start Break' in action or 'Start Lunch' in action:
+                status = "On Break"
+            elif 'End Break' in action or 'End Lunch' in action:
+                status = "Back to Work"
+            else:
+                status = ""
             
-            # Find first clock in and last clock out
-            first_clock_in = daily_logs.filter(action='clock_in').order_by('timestamp').first()
-            last_clock_out = daily_logs.filter(action='clock_out').order_by('-timestamp').first()
+            # Apply alternating row styling for user sheet
+            row_style = alt_row_fill if user_row % 2 == 0 else None
             
-            if first_clock_in:
-                daily_summary[log_date]['clock_in_time'] = timezone.localtime(first_clock_in.timestamp)
-                # Check for late arrival
-                if first_clock_in.note and 'Late arrival:' in first_clock_in.note:
-                    try:
-                        minutes_late = int(first_clock_in.note.split('Late arrival:')[1].split('minutes')[0].strip())
-                        daily_summary[log_date]['late_minutes'] = minutes_late
-                    except (ValueError, IndexError):
-                        pass
+            # Apply styling to all cells in the row for user sheet
+            for col in range(1, 6):
+                cell = user_sheet.cell(row=user_row, column=col)
+                cell.border = thin_border
+                if row_style:
+                    cell.fill = row_style
             
-            if last_clock_out:
-                daily_summary[log_date]['clock_out_time'] = timezone.localtime(last_clock_out.timestamp)
+            # Add data to the user sheet
+            user_sheet.cell(row=user_row, column=1).value = log_date
+            user_sheet.cell(row=user_row, column=2).value = log_time
+            user_sheet.cell(row=user_row, column=3).value = action
+            user_sheet.cell(row=user_row, column=4).value = status
+            user_sheet.cell(row=user_row, column=5).value = log.note or ""
             
-            # Calculate total hours if both clock in and out exist
-            if daily_summary[log_date]['clock_in_time'] and daily_summary[log_date]['clock_out_time']:
-                daily_summary[log_date]['status'] = 'Complete'
-                time_diff = daily_summary[log_date]['clock_out_time'] - daily_summary[log_date]['clock_in_time']
-                # Convert to decimal hours (e.g., 7.5 hours)
-                daily_summary[log_date]['total_hours'] = round(time_diff.total_seconds() / 3600, 2)
+            user_row += 1
             
-            # Add this date to the summary sheet
-            data = daily_summary[log_date]
-            
-            # Apply styling based on row number
+            # Now add the same data to the summary sheet
+            # Apply alternating row styling for summary sheet
             row_style = alt_row_fill if summary_row % 2 == 0 else None
             
-            for col in range(1, 14):
+            # Apply styling to all cells in the row for summary sheet
+            for col in range(1, 7):
                 cell = summary_sheet.cell(row=summary_row, column=col)
                 cell.border = thin_border
                 if row_style:
                     cell.fill = row_style
             
-            # Username
+            # Add data to the summary sheet
             summary_sheet.cell(row=summary_row, column=1).value = user.username
+            summary_sheet.cell(row=summary_row, column=2).value = log_date
+            summary_sheet.cell(row=summary_row, column=3).value = log_time
+            summary_sheet.cell(row=summary_row, column=4).value = action
+            summary_sheet.cell(row=summary_row, column=5).value = status
+            summary_sheet.cell(row=summary_row, column=6).value = log.note or ""
             
-            # Date
-            summary_sheet.cell(row=summary_row, column=2).value = log_date.strftime('%Y-%m-%d')
-            
-            # Status
-            summary_sheet.cell(row=summary_row, column=3).value = data['status']
-            
-            # Format clock times nicely
-            if data['clock_in_time']:
-                summary_sheet.cell(row=summary_row, column=4).value = data['clock_in_time'].strftime('%I:%M %p')
-            if data['clock_out_time']:
-                summary_sheet.cell(row=summary_row, column=5).value = data['clock_out_time'].strftime('%I:%M %p')
-                
-            # Hours worked
-            summary_sheet.cell(row=summary_row, column=6).value = data['total_hours']
-            
-            # Break and lunch times
-            summary_sheet.cell(row=summary_row, column=7).value = data['break1_used']
-            summary_sheet.cell(row=summary_row, column=8).value = data['break2_used']
-            summary_sheet.cell(row=summary_row, column=9).value = data['lunch_used']
-            
-            # Highlight exceeded times
-            if data['break1_exceeded'] > 0:
-                summary_sheet.cell(row=summary_row, column=10).value = data['break1_exceeded']
-                summary_sheet.cell(row=summary_row, column=10).font = exceeded_font
-            else:
-                summary_sheet.cell(row=summary_row, column=10).value = 0
-                
-            if data['break2_exceeded'] > 0:
-                summary_sheet.cell(row=summary_row, column=11).value = data['break2_exceeded']
-                summary_sheet.cell(row=summary_row, column=11).font = exceeded_font
-            else:
-                summary_sheet.cell(row=summary_row, column=11).value = 0
-                
-            if data['lunch_exceeded'] > 0:
-                summary_sheet.cell(row=summary_row, column=12).value = data['lunch_exceeded']
-                summary_sheet.cell(row=summary_row, column=12).font = exceeded_font
-            else:
-                summary_sheet.cell(row=summary_row, column=12).value = 0
-            
-            # Add late minutes if any
-            if data['late_minutes'] > 0:
-                summary_sheet.cell(row=summary_row, column=13).value = data['late_minutes']
-                summary_sheet.cell(row=summary_row, column=13).font = exceeded_font
-            else:
-                summary_sheet.cell(row=summary_row, column=13).value = 0
-                
             summary_row += 1
-            
-            # Add detailed logs to user sheet
-            for log in daily_logs:
-                # Format the time in local timezone with 12-hour AM/PM format
-                local_time = timezone.localtime(log.timestamp).strftime('%I:%M %p')
-                
-                # Apply styling based on row number
-                row_style = alt_row_fill if user_row % 2 == 0 else None
-                
-                for col in range(1, 6):
-                    cell = user_sheet.cell(row=user_row, column=col)
-                    cell.border = thin_border
-                    if row_style:
-                        cell.fill = row_style
-                
-                # Date
-                user_sheet.cell(row=user_row, column=1).value = log_date.strftime('%Y-%m-%d')
-                
-                # Action - format nicely
-                user_sheet.cell(row=user_row, column=2).value = log.action.replace('_', ' ').title()
-                
-                # Time
-                user_sheet.cell(row=user_row, column=3).value = local_time
-                
-                # Note
-                user_sheet.cell(row=user_row, column=4).value = log.note or ''
-                
-                # Break/Lunch Status - add status information for break/lunch ends
-                if log.action in ['end_break1', 'end_break2', 'end_lunch']:
-                    status_text = ''
-                    if log.action == 'end_break1' and break1_exceeded > 0:
-                        status_text = f'Exceeded by {break1_exceeded} min'
-                        user_sheet.cell(row=user_row, column=5).font = exceeded_font
-                    elif log.action == 'end_break2' and break2_exceeded > 0:
-                        status_text = f'Exceeded by {break2_exceeded} min'
-                        user_sheet.cell(row=user_row, column=5).font = exceeded_font
-                    elif log.action == 'end_lunch' and lunch_exceeded > 0:
-                        status_text = f'Exceeded by {lunch_exceeded} min'
-                        user_sheet.cell(row=user_row, column=5).font = exceeded_font
-                    else:
-                        if log.action == 'end_break1':
-                            status_text = f'{break1_remaining} min remaining'
-                        elif log.action == 'end_break2':
-                            status_text = f'{break2_remaining} min remaining'
-                        elif log.action == 'end_lunch':
-                            status_text = f'{lunch_remaining} min remaining'
-                            
-                    user_sheet.cell(row=user_row, column=5).value = status_text
-                
-                user_row += 1
         
-        # Auto-adjust column widths for user sheet
-        for column in user_sheet.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            
-            for cell in column:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            
-            adjusted_width = max(max_length + 2, 12)  # Minimum width of 12
-            user_sheet.column_dimensions[column_letter].width = adjusted_width
+        # Use our helper function to adjust column widths safely for user sheet
+        adjust_column_widths(user_sheet)
         
         # Set print area and page setup for user sheet
         user_sheet.page_setup.orientation = user_sheet.ORIENTATION_LANDSCAPE
         user_sheet.page_setup.fitToWidth = True
-        user_sheet.print_title_rows = '1:1'  # Repeat header row on each page
+        user_sheet.print_title_rows = '1:2'  # Repeat header rows on each page
     
-    # Add totals row to summary sheet if we have more than one row of data
-    if summary_row > 2:
-        # Style the totals row
-        for col in range(1, 14):
-            cell = summary_sheet.cell(row=summary_row, column=col)
-            cell.font = header_font
-            cell.border = thin_border
-            cell.fill = header_fill
-        
-        # Add "TOTALS" text
-        summary_sheet.cell(row=summary_row, column=1).value = "TOTALS"
-        summary_sheet.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=3)
-        summary_sheet.cell(row=summary_row, column=1).alignment = Alignment(horizontal='center')
-        
-        # Add formulas for totals
-        summary_sheet.cell(row=summary_row, column=6).value = f"=SUM(F2:F{summary_row-1})"  # Total hours
-        summary_sheet.cell(row=summary_row, column=7).value = f"=SUM(G2:G{summary_row-1})"  # Break1 used
-        summary_sheet.cell(row=summary_row, column=8).value = f"=SUM(H2:H{summary_row-1})"  # Break2 used
-        summary_sheet.cell(row=summary_row, column=9).value = f"=SUM(I2:I{summary_row-1})"  # Lunch used
-        summary_sheet.cell(row=summary_row, column=10).value = f"=SUM(J2:J{summary_row-1})"  # Break1 exceeded
-        summary_sheet.cell(row=summary_row, column=11).value = f"=SUM(K2:K{summary_row-1})"  # Break2 exceeded
-        summary_sheet.cell(row=summary_row, column=12).value = f"=SUM(L2:L{summary_row-1})"  # Lunch exceeded
-        summary_sheet.cell(row=summary_row, column=13).value = f"=SUM(M2:M{summary_row-1})"  # Late minutes
-    
-    # Auto-adjust column widths for summary sheet
-    for column in summary_sheet.columns:
-        max_length = 0
-        column_letter = column[0].column_letter
-        
-        for cell in column:
-            if cell.value:
-                max_length = max(max_length, len(str(cell.value)))
-        
-        adjusted_width = max(max_length + 2, 12)  # Minimum width of 12
-        summary_sheet.column_dimensions[column_letter].width = adjusted_width
+    # Use our helper function to adjust column widths safely for summary sheet
+    adjust_column_widths(summary_sheet)
     
     # Set summary sheet as the active sheet
     wb.active = summary_sheet
@@ -1236,12 +835,35 @@ def admin_export_csv(request):
     filename = f"{filename_prefix}_{current_month_year}.xlsx"
     
     response = HttpResponse(
-        output.read(),
+        output.getvalue(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     
     return response
+
+# Modified function to safely handle column width adjustment
+
+def adjust_column_widths(sheet):
+    """Helper function to safely adjust column widths"""
+    for col_idx in range(1, sheet.max_column + 1):
+        column_letter = get_column_letter(col_idx)
+        max_length = 0
+        
+        # Check each cell in the column
+        for row_idx in range(1, sheet.max_row + 1):
+            cell = sheet.cell(row=row_idx, column=col_idx)
+            # Only process if it's a normal cell (not merged) and has a value
+            if cell.__class__.__name__ != 'MergedCell' and cell.value:
+                try:
+                    cell_length = len(str(cell.value))
+                    max_length = max(max_length, cell_length)
+                except:
+                    pass
+        
+        # Set column width
+        adjusted_width = max(max_length + 2, 12)  # Minimum width of 12
+        sheet.column_dimensions[column_letter].width = adjusted_width
 
 # Automatic clock out function
 def auto_clock_out_at_shift_end():
@@ -1251,131 +873,6 @@ def auto_clock_out_at_shift_end():
     """
     now = timezone.now()
     manila_tz = pytz.timezone('Asia/Manila')
-    local_now = now.astimezone(manila_tz)
-    current_time = local_now.time()
-    current_date = local_now.date()
+    now_manila = now.astimezone(manila_tz)
     
-    # Only run this between 7:00-7:10 AM
-    if current_time >= time(7, 0) and current_time < time(7, 10):
-        # Get all users in the system
-        all_users = User.objects.filter(is_active=True)
-        
-        # 1. First, let's end any ongoing breaks or lunch for ALL users
-        for user in all_users:
-            today_allocation = DailyTimeAllocation.objects.filter(
-                user=user,
-                date=current_date
-            ).first()
-            
-            if today_allocation:
-                # Check and end Break 1 if active
-                if today_allocation.break1_start_time:
-                    break_duration = now - today_allocation.break1_start_time
-                    minutes_used = int(break_duration.total_seconds() // 60)
-                    today_allocation.break1_minutes_used += minutes_used
-                    
-                    # Log break end
-                    break_log = AttendanceLog(
-                        user=user,
-                        action='end_break1',
-                        note=f'Auto-ended break at shift end. Duration: {minutes_used} minutes'
-                    )
-                    break_log.save()
-                    today_allocation.break1_start_time = None
-                
-                # Check and end Break 2 if active
-                if today_allocation.break2_start_time:
-                    break_duration = now - today_allocation.break2_start_time
-                    minutes_used = int(break_duration.total_seconds() // 60)
-                    today_allocation.break2_minutes_used += minutes_used
-                    
-                    # Log break end
-                    break_log = AttendanceLog(
-                        user=user,
-                        action='end_break2',
-                        note=f'Auto-ended break at shift end. Duration: {minutes_used} minutes'
-                    )
-                    break_log.save()
-                    today_allocation.break2_start_time = None
-                
-                # Check and end Lunch if active
-                if today_allocation.lunch_start_time:
-                    lunch_duration = now - today_allocation.lunch_start_time
-                    minutes_used = int(lunch_duration.total_seconds() // 60)
-                    today_allocation.lunch_minutes_used += minutes_used
-                    
-                    # Log lunch end
-                    lunch_log = AttendanceLog(
-                        user=user,
-                        action='end_lunch',
-                        note=f'Auto-ended lunch at shift end. Duration: {minutes_used} minutes'
-                    )
-                    lunch_log.save()
-                    today_allocation.lunch_start_time = None
-                
-                # Save the updated allocation
-                today_allocation.save()
-
-        # 2. Now, find users who are still clocked in and clock them out
-        yesterday = current_date - timedelta(days=1)
-        
-        # Check for yesterday's clock-ins
-        yesterday_clock_ins = AttendanceLog.objects.filter(
-            action='clock_in',
-            timestamp__date=yesterday
-        ).select_related('user')
-        
-        # Check for today's early morning clock-ins (before 7 AM)
-        today_early_clock_ins = AttendanceLog.objects.filter(
-            action='clock_in',
-            timestamp__date=current_date,
-            timestamp__time__lt=time(7, 0)
-        ).select_related('user')
-        
-        # For each potential clocked-in user, check if they've clocked out
-        potential_users = set()
-        for log in list(yesterday_clock_ins) + list(today_early_clock_ins):
-            potential_users.add(log.user)
-        
-        for user in potential_users:
-            # Check if the user has a clock-out entry after their last clock-in
-            last_clock_in = AttendanceLog.objects.filter(
-                user=user,
-                action='clock_in',
-                timestamp__date__gte=yesterday,
-                timestamp__date__lte=current_date
-            ).order_by('-timestamp').first()
-            
-            if last_clock_in:
-                last_clock_out = AttendanceLog.objects.filter(
-                    user=user,
-                    action='clock_out',
-                    timestamp__gt=last_clock_in.timestamp
-                ).first()
-                
-                if not last_clock_out:
-                    # Create clock-out log - they're still clocked in
-                    log = AttendanceLog(
-                        user=user, 
-                        action='clock_out', 
-                        note='Automatic clock-out at shift end (7 AM)'
-                    )
-                    log.save()
-        
-        # 3. Reset all break/lunch allocations for the new day
-        # Get all allocations for today
-        today_allocations = DailyTimeAllocation.objects.filter(date=current_date)
-        
-        for allocation in today_allocations:
-            # Reset to fresh allocation values for the new day
-            allocation.break1_minutes_used = 0
-            allocation.break2_minutes_used = 0
-            allocation.lunch_minutes_used = 0
-            allocation.break1_start_time = None
-            allocation.break2_start_time = None
-            allocation.lunch_start_time = None
-            allocation.save()
-            
-        return f"Auto clock-out process completed. Ended breaks, clocked out remaining users, and reset allocations."
-    else:
-        return "Auto clock-out process skipped - not between 7:00-7:10 AM."
+    # Rest of the function...

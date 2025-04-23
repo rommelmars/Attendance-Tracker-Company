@@ -775,3 +775,55 @@ span.flatpickr-weekday {
         margin: 0.2rem;
     }
 }
+
+/* Clock Out Modal Styles */
+.reason-options {
+    margin: 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.reason-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.7);
+    transition: all 0.3s ease;
+}
+
+.reason-option:hover {
+    background-color: rgba(46, 139, 87, 0.1);
+}
+
+.reason-option input[type="radio"] {
+    accent-color: #2e8b57;
+    width: 18px;
+    height: 18px;
+}
+
+.reason-option label {
+    flex: 1;
+    cursor: pointer;
+    font-weight: 500;
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+#other-reason {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    resize: vertical;
+    margin-top: 5px;
+}
